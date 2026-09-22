@@ -1,0 +1,1879 @@
+<title>Decimen Receiver</title>
+<meta name="description" content="Camera-based receiver for Decimen QR fountain-code file transfers, built for iPhone Safari.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f4f7f5; --panel:#ffffff; --panel-2:#eef3f0; --line:#d8e3de;
+    --text:#12211c; --muted:#5b6f68; --accent:#0f9d68; --accent-ink:#ffffff;
+    --accent-2:#b8720a; --danger:#c53d33; --ok:#0f9d68;
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0a0f0d; --panel:#111a16; --panel-2:#16211c; --line:#22322a;
+      --text:#e6f0ea; --muted:#84a094; --accent:#35e0a1; --accent-ink:#062017;
+      --accent-2:#ffb454; --danger:#ff7a70; --ok:#35e0a1;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0a0f0d; --panel:#111a16; --panel-2:#16211c; --line:#22322a;
+    --text:#e6f0ea; --muted:#84a094; --accent:#35e0a1; --accent-ink:#062017;
+    --accent-2:#ffb454; --danger:#ff7a70; --ok:#35e0a1;
+  }
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    padding-inline:16px; padding-block:20px; max-width:560px; margin:0 auto;
+    display:flex; flex-direction:column; gap:16px;
+  }
+  h1{
+    font-size:15px; font-weight:800; letter-spacing:.02em; text-transform:uppercase;
+    margin:0; display:flex; align-items:center; gap:8px; color:var(--text);
+  }
+  h1 .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none;transition:background .2s;}
+  h1 .dot.live{background:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent);}
+  .sub{font-size:12.5px; color:var(--muted); margin-top:-10px;}
+  .panel{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px; display:flex; flex-direction:column; gap:12px;
+  }
+  .viewport{
+    position:relative; width:100%; aspect-ratio:3/4; background:#000;
+    border-radius:calc(var(--radius) - 4px); overflow:hidden; border:1px solid var(--line);
+  }
+  .viewport video{width:100%; height:100%; object-fit:cover; display:block;}
+  .viewport canvas{display:none;}
+  .frame-overlay{
+    position:absolute; inset:8%; pointer-events:none;
+    border-radius:10px; transition:border-color .15s, box-shadow .15s;
+    border:2px solid rgba(255,255,255,.28);
+  }
+  .frame-overlay.hit{ border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent) inset; }
+  .frame-overlay::before, .frame-overlay::after, .corner-tl, .corner-br{ content:''; }
+  .corner{position:absolute; width:22px; height:22px; border-color:rgba(255,255,255,.55); transition:border-color .15s;}
+  .frame-overlay.hit .corner{border-color:var(--accent);}
+  .c-tl{top:-2px;left:-2px;border-top:3px solid;border-left:3px solid;border-top-left-radius:8px;}
+  .c-tr{top:-2px;right:-2px;border-top:3px solid;border-right:3px solid;border-top-right-radius:8px;}
+  .c-bl{bottom:-2px;left:-2px;border-bottom:3px solid;border-left:3px solid;border-bottom-left-radius:8px;}
+  .c-br{bottom:-2px;right:-2px;border-bottom:3px solid;border-right:3px solid;border-bottom-right-radius:8px;}
+  .placeholder{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:10px; color:#8fa79c; font-size:13px; text-align:center; padding:24px;
+  }
+  .placeholder svg{width:40px;height:40px;opacity:.8;}
+  .controls{display:flex; gap:10px;}
+  button{
+    font-family:var(--sans); font-weight:700; font-size:13.5px; border-radius:10px;
+    border:1px solid var(--line); padding:11px 16px; cursor:pointer; flex:1;
+    background:var(--panel-2); color:var(--text); transition:transform .08s, opacity .15s;
+  }
+  button:active{transform:scale(.97);}
+  button.primary{background:var(--accent); color:var(--accent-ink); border-color:transparent;}
+  button.ghost{background:transparent;}
+  button:disabled{opacity:.45; cursor:default;}
+  .readout{display:flex; flex-direction:column; gap:10px;}
+  .row{display:flex; justify-content:space-between; align-items:baseline; gap:10px; font-size:13px;}
+  .row .k{color:var(--muted);}
+  .row .v{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600; text-align:right;}
+  .bar{height:8px; border-radius:5px; background:var(--panel-2); border:1px solid var(--line); overflow:hidden;}
+  .bar > i{display:block; height:100%; width:0%; background:var(--accent); transition:width .25s ease;}
+  .log{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); line-height:1.6;
+    max-height:110px; overflow-y:auto; border-top:1px dashed var(--line); padding-top:8px;
+    white-space:pre-wrap; word-break:break-word;
+  }
+  .log div:last-child{color:var(--text);}
+  .badge{
+    display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700;
+    padding:3px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:.03em;
+  }
+  .badge.ok{background:color-mix(in srgb, var(--ok) 18%, transparent); color:var(--ok);}
+  .badge.warn{background:color-mix(in srgb, var(--danger) 18%, transparent); color:var(--danger);}
+  .result{display:none; flex-direction:column; gap:12px;}
+  .result.show{display:flex;}
+  .file-card{display:flex; gap:12px; align-items:center;}
+  .file-icon{
+    width:44px; height:44px; border-radius:10px; background:var(--panel-2); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center; flex:none; font-size:18px;
+  }
+  .file-meta{min-width:0; flex:1;}
+  .file-name{font-weight:700; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .file-sub{font-size:12px; color:var(--muted); font-family:var(--mono);}
+  .preview-text{
+    font-family:var(--mono); font-size:11.5px; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:10px; padding:10px; max-height:160px; overflow:auto; white-space:pre-wrap; word-break:break-word;
+  }
+  .preview-img{width:100%; border-radius:10px; border:1px solid var(--line); display:block;}
+  .help{font-size:12px; color:var(--muted); line-height:1.55;}
+  .help b{color:var(--text);}
+  .cam-error{
+    font-size:12.5px; line-height:1.5; color:var(--danger); background:color-mix(in srgb, var(--danger) 12%, transparent);
+    border:1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius:10px; padding:10px 12px;
+  }
+  .cam-error b{display:block; margin-bottom:2px;}
+  a{color:var(--accent);}
+</style>
+
+<h1><span class="dot" id="liveDot"></span>Decimen Receiver</h1>
+<div class="sub">Приёмник QR-потока (fountain code) для проекта Decimen — наведите камеру на экран отправителя.</div>
+
+<div class="panel">
+  <div class="viewport" id="viewport">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="canvas"></canvas>
+    <div class="frame-overlay" id="frameOverlay">
+      <i class="corner c-tl"></i><i class="corner c-tr"></i><i class="corner c-bl"></i><i class="corner c-br"></i>
+    </div>
+    <div class="placeholder" id="placeholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 8V6a2 2 0 0 1 2-2h2M4 16v2a2 2 0 0 0 2 2h2M20 8V6a2 2 0 0 0-2-2h-2M20 16v2a2 2 0 0 1-2 2h-2M9 9h1v1H9zM14 9h1v1h-1zM9 14h1v1H9zM12 12h1v1h-1zM14 14h3v3h-3z"/></svg>
+      <div>Нажмите «Включить камеру», затем наведите её на монитор с бегущими QR-кадрами Decimen</div>
+    </div>
+  </div>
+  <div class="controls">
+    <button class="primary" id="startBtn">Включить камеру</button>
+    <button class="ghost" id="stopBtn" style="display:none">Остановить</button>
+    <button class="ghost" id="resetBtn">Сброс</button>
+  </div>
+  <div class="cam-error" id="cameraError" style="display:none"></div>
+</div>
+
+<div class="panel" id="telemetryPanel" style="display:none">
+  <div class="readout">
+    <div class="row"><span class="k">Сессия</span><span class="v" id="tSession">—</span></div>
+    <div class="row"><span class="k">Блоков получено</span><span class="v" id="tBlocks">0 / 0</span></div>
+    <div class="bar"><i id="tBar"></i></div>
+    <div class="row"><span class="k">Кадров QR распознано</span><span class="v" id="tFrames">0</span></div>
+    <div class="row"><span class="k">Скорость сканирования</span><span class="v" id="tFps">— fps</span></div>
+  </div>
+  <div class="log" id="logBox"></div>
+</div>
+
+<div class="panel result" id="resultPanel">
+  <div class="row"><span class="badge ok" id="resultBadge">Готово</span></div>
+  <div class="file-card">
+    <div class="file-icon" id="fileIcon">📄</div>
+    <div class="file-meta">
+      <div class="file-name" id="fileName">—</div>
+      <div class="file-sub" id="fileSub">—</div>
+    </div>
+  </div>
+  <div id="previewSlot"></div>
+  <div class="controls">
+    <button class="primary" id="saveBtn">Сохранить файл</button>
+  </div>
+  <div class="help" id="saveHelp"></div>
+</div>
+
+<div class="panel help">
+  <div><b>Как это работает:</b> запустите отправку в приложении Decimen на компьютере, направьте камеру телефона на экран так, чтобы QR-код был виден целиком. Страница сама соберёт файл из потока кадров (fountain code), даже если часть кадров будет пропущена или размыта — просто держите камеру наведённой чуть дольше.</div>
+</div>
+
+<script>
+// QR Code core: matrix-level encode/decode (spec-level, no camera/image handling).
+// Self-contained, no dependencies. Works in Node (module.exports) and browser (window.QR).
+(function (root) {
+  'use strict';
+
+  // ---------- Static tables ----------
+  var EC_TABLE = {"1": {"L": [7, 1, 19, 0, 0], "M": [10, 1, 16, 0, 0], "Q": [13, 1, 13, 0, 0], "H": [17, 1, 9, 0, 0]}, "2": {"L": [10, 1, 34, 0, 0], "M": [16, 1, 28, 0, 0], "Q": [22, 1, 22, 0, 0], "H": [28, 1, 16, 0, 0]}, "3": {"L": [15, 1, 55, 0, 0], "M": [26, 1, 44, 0, 0], "Q": [18, 2, 17, 0, 0], "H": [22, 2, 13, 0, 0]}, "4": {"L": [20, 1, 80, 0, 0], "M": [18, 2, 32, 0, 0], "Q": [26, 2, 24, 0, 0], "H": [16, 4, 9, 0, 0]}, "5": {"L": [26, 1, 108, 0, 0], "M": [24, 2, 43, 0, 0], "Q": [18, 2, 15, 2, 16], "H": [22, 2, 11, 2, 12]}, "6": {"L": [18, 2, 68, 0, 0], "M": [16, 4, 27, 0, 0], "Q": [24, 4, 19, 0, 0], "H": [28, 4, 15, 0, 0]}, "7": {"L": [20, 2, 78, 0, 0], "M": [18, 4, 31, 0, 0], "Q": [18, 2, 14, 4, 15], "H": [26, 4, 13, 1, 14]}, "8": {"L": [24, 2, 97, 0, 0], "M": [22, 2, 38, 2, 39], "Q": [22, 4, 18, 2, 19], "H": [26, 4, 14, 2, 15]}, "9": {"L": [30, 2, 116, 0, 0], "M": [22, 3, 36, 2, 37], "Q": [20, 4, 16, 4, 17], "H": [24, 4, 12, 4, 13]}, "10": {"L": [18, 2, 68, 2, 69], "M": [26, 4, 43, 1, 44], "Q": [24, 6, 19, 2, 20], "H": [28, 6, 15, 2, 16]}, "11": {"L": [20, 4, 81, 0, 0], "M": [30, 1, 50, 4, 51], "Q": [28, 4, 22, 4, 23], "H": [24, 3, 12, 8, 13]}, "12": {"L": [24, 2, 92, 2, 93], "M": [22, 6, 36, 2, 37], "Q": [26, 4, 20, 6, 21], "H": [28, 7, 14, 4, 15]}, "13": {"L": [26, 4, 107, 0, 0], "M": [22, 8, 37, 1, 38], "Q": [24, 8, 20, 4, 21], "H": [22, 12, 11, 4, 12]}, "14": {"L": [30, 3, 115, 1, 116], "M": [24, 4, 40, 5, 41], "Q": [20, 11, 16, 5, 17], "H": [24, 11, 12, 5, 13]}, "15": {"L": [22, 5, 87, 1, 88], "M": [24, 5, 41, 5, 42], "Q": [30, 5, 24, 7, 25], "H": [24, 11, 12, 7, 13]}, "16": {"L": [24, 5, 98, 1, 99], "M": [28, 7, 45, 3, 46], "Q": [24, 15, 19, 2, 20], "H": [30, 3, 15, 13, 16]}, "17": {"L": [28, 1, 107, 5, 108], "M": [28, 10, 46, 1, 47], "Q": [28, 1, 22, 15, 23], "H": [28, 2, 14, 17, 15]}, "18": {"L": [30, 5, 120, 1, 121], "M": [26, 9, 43, 4, 44], "Q": [28, 17, 22, 1, 23], "H": [28, 2, 14, 19, 15]}, "19": {"L": [28, 3, 113, 4, 114], "M": [26, 3, 44, 11, 45], "Q": [26, 17, 21, 4, 22], "H": [26, 9, 13, 16, 14]}, "20": {"L": [28, 3, 107, 5, 108], "M": [26, 3, 41, 13, 42], "Q": [30, 15, 24, 5, 25], "H": [28, 15, 15, 10, 16]}, "21": {"L": [28, 4, 116, 4, 117], "M": [26, 17, 42, 0, 0], "Q": [28, 17, 22, 6, 23], "H": [30, 19, 16, 6, 17]}, "22": {"L": [28, 2, 111, 7, 112], "M": [28, 17, 46, 0, 0], "Q": [30, 7, 24, 16, 25], "H": [24, 34, 13, 0, 0]}, "23": {"L": [30, 4, 121, 5, 122], "M": [28, 4, 47, 14, 48], "Q": [30, 11, 24, 14, 25], "H": [30, 16, 15, 14, 16]}, "24": {"L": [30, 6, 117, 4, 118], "M": [28, 6, 45, 14, 46], "Q": [30, 11, 24, 16, 25], "H": [30, 30, 16, 2, 17]}, "25": {"L": [26, 8, 106, 4, 107], "M": [28, 8, 47, 13, 48], "Q": [30, 7, 24, 22, 25], "H": [30, 22, 15, 13, 16]}, "26": {"L": [28, 10, 114, 2, 115], "M": [28, 19, 46, 4, 47], "Q": [28, 28, 22, 6, 23], "H": [30, 33, 16, 4, 17]}, "27": {"L": [30, 8, 122, 4, 123], "M": [28, 22, 45, 3, 46], "Q": [30, 8, 23, 26, 24], "H": [30, 12, 15, 28, 16]}, "28": {"L": [30, 3, 117, 10, 118], "M": [28, 3, 45, 23, 46], "Q": [30, 4, 24, 31, 25], "H": [30, 11, 15, 31, 16]}, "29": {"L": [30, 7, 116, 7, 117], "M": [28, 21, 45, 7, 46], "Q": [30, 1, 23, 37, 24], "H": [30, 19, 15, 26, 16]}, "30": {"L": [30, 5, 115, 10, 116], "M": [28, 19, 47, 10, 48], "Q": [30, 15, 24, 25, 25], "H": [30, 23, 15, 25, 16]}, "31": {"L": [30, 13, 115, 3, 116], "M": [28, 2, 46, 29, 47], "Q": [30, 42, 24, 1, 25], "H": [30, 23, 15, 28, 16]}, "32": {"L": [30, 17, 115, 0, 0], "M": [28, 10, 46, 23, 47], "Q": [30, 10, 24, 35, 25], "H": [30, 19, 15, 35, 16]}, "33": {"L": [30, 17, 115, 1, 116], "M": [28, 14, 46, 21, 47], "Q": [30, 29, 24, 19, 25], "H": [30, 11, 15, 46, 16]}, "34": {"L": [30, 13, 115, 6, 116], "M": [28, 14, 46, 23, 47], "Q": [30, 44, 24, 7, 25], "H": [30, 59, 16, 1, 17]}, "35": {"L": [30, 12, 121, 7, 122], "M": [28, 12, 47, 26, 48], "Q": [30, 39, 24, 14, 25], "H": [30, 22, 15, 41, 16]}, "36": {"L": [30, 6, 121, 14, 122], "M": [28, 6, 47, 34, 48], "Q": [30, 46, 24, 10, 25], "H": [30, 2, 15, 64, 16]}, "37": {"L": [30, 17, 122, 4, 123], "M": [28, 29, 46, 14, 47], "Q": [30, 49, 24, 10, 25], "H": [30, 24, 15, 46, 16]}, "38": {"L": [30, 4, 122, 18, 123], "M": [28, 13, 46, 32, 47], "Q": [30, 48, 24, 14, 25], "H": [30, 42, 15, 32, 16]}, "39": {"L": [30, 20, 117, 4, 118], "M": [28, 40, 47, 7, 48], "Q": [30, 43, 24, 22, 25], "H": [30, 10, 15, 67, 16]}, "40": {"L": [30, 19, 118, 6, 119], "M": [28, 18, 47, 31, 48], "Q": [30, 34, 24, 34, 25], "H": [30, 20, 15, 61, 16]}};       // version(string) -> {L:[ec,b1,d1,b2,d2], M:[...], Q:[...], H:[...]}
+  var ALIGN = {"2": [6, 18], "3": [6, 22], "4": [6, 26], "5": [6, 30], "6": [6, 34], "7": [6, 22, 38], "8": [6, 24, 42], "9": [6, 26, 46], "10": [6, 28, 50], "11": [6, 30, 54], "12": [6, 32, 58], "13": [6, 34, 62], "14": [6, 26, 46, 66], "15": [6, 26, 48, 70], "16": [6, 26, 50, 74], "17": [6, 30, 54, 78], "18": [6, 30, 56, 82], "19": [6, 30, 58, 86], "20": [6, 34, 62, 90], "21": [6, 28, 50, 72, 94], "22": [6, 26, 50, 74, 98], "23": [6, 30, 54, 78, 102], "24": [6, 28, 54, 80, 106], "25": [6, 32, 58, 84, 110], "26": [6, 30, 58, 86, 114], "27": [6, 34, 62, 90, 118], "28": [6, 26, 50, 74, 98, 122], "29": [6, 30, 54, 78, 102, 126], "30": [6, 26, 52, 78, 104, 130], "31": [6, 30, 56, 82, 108, 134], "32": [6, 34, 60, 86, 112, 138], "33": [6, 30, 58, 86, 114, 142], "34": [6, 34, 62, 90, 118, 146], "35": [6, 30, 54, 78, 102, 126, 150], "36": [6, 24, 50, 76, 102, 128, 154], "37": [6, 28, 54, 80, 106, 132, 158], "38": [6, 32, 58, 84, 110, 136, 162], "39": [6, 26, 54, 82, 110, 138, 166], "40": [6, 30, 58, 86, 114, 142, 170]};             // version(string) -> [coord,...]
+  var FORMAT_STRINGS = {"L0": "111011111000100", "L1": "111001011110011", "L2": "111110110101010", "L3": "111100010011101", "L4": "110011000101111", "L5": "110001100011000", "L6": "110110001000001", "L7": "110100101110110", "M0": "101010000010010", "M1": "101000100100101", "M2": "101111001111100", "M3": "101101101001011", "M4": "100010111111001", "M5": "100000011001110", "M6": "100111110010111", "M7": "100101010100000", "Q0": "011010101011111", "Q1": "011000001101000", "Q2": "011111100110001", "Q3": "011101000000110", "Q4": "010010010110100", "Q5": "010000110000011", "Q6": "010111011011010", "Q7": "010101111101101", "H0": "001011010001001", "H1": "001001110111110", "H2": "001110011100111", "H3": "001100111010000", "H4": "000011101100010", "H5": "000001001010101", "H6": "000110100001100", "H7": "000100000111011"};      // "L0".."H7" -> 15-char '0'/'1' string
+  var VERSION_STRINGS = {"7": "000111110010010100", "8": "001000010110111100", "9": "001001101010011001", "10": "001010010011010011", "11": "001011101111110110", "12": "001100011101100010", "13": "001101100001000111", "14": "001110011000001101", "15": "001111100100101000", "16": "010000101101111000", "17": "010001010001011101", "18": "010010101000010111", "19": "010011010100110010", "20": "010100100110100110", "21": "010101011010000011", "22": "010110100011001001", "23": "010111011111101100", "24": "011000111011000100", "25": "011001000111100001", "26": "011010111110101011", "27": "011011000010001110", "28": "011100110000011010", "29": "011101001100111111", "30": "011110110101110101", "31": "011111001001010000", "32": "100000100111010101", "33": "100001011011110000", "34": "100010100010111010", "35": "100011011110011111", "36": "100100101100001011", "37": "100101010000101110", "38": "100110101001100100", "39": "100111010101000001", "40": "101000110001101001"};     // "7".."40" -> 18-char '0'/'1' string
+
+  var ECC_LEVELS = ['L', 'M', 'Q', 'H'];
+
+  function sizeForVersion(v) { return 17 + 4 * v; }
+
+  // ---------- GF(256) arithmetic for Reed-Solomon, primitive poly 0x11D ----------
+  var GF_EXP = new Int32Array(512);
+  var GF_LOG = new Int32Array(256);
+  (function initGF() {
+    var x = 1;
+    for (var i = 0; i < 255; i++) {
+      GF_EXP[i] = x;
+      GF_LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11D;
+    }
+    for (var j = 255; j < 512; j++) GF_EXP[j] = GF_EXP[j - 255];
+  })();
+  function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return GF_EXP[GF_LOG[a] + GF_LOG[b]];
+  }
+  function gfDiv(a, b) {
+    if (a === 0) return 0;
+    if (b === 0) throw new Error('div by zero');
+    return GF_EXP[(GF_LOG[a] - GF_LOG[b] + 255) % 255];
+  }
+
+  // Generator polynomial for RS code of given number of EC codewords (coeffs, highest degree first, monic).
+  function rsGeneratorPoly(ecCount) {
+    var poly = [1];
+    for (var i = 0; i < ecCount; i++) {
+      // multiply poly by (x - alpha^i) == (x + alpha^i) in GF(2^8)
+      var next = new Array(poly.length + 1).fill(0);
+      var ai = GF_EXP[i];
+      for (var j = 0; j < poly.length; j++) {
+        next[j] ^= poly[j];
+        next[j + 1] ^= gfMul(poly[j], ai);
+      }
+      poly = next;
+    }
+    return poly; // length ecCount+1
+  }
+
+  // Encode: given data codewords (array of bytes) and ecCount, return EC codewords (array length ecCount).
+  function rsEncode(dataCodewords, ecCount) {
+    var gen = rsGeneratorPoly(ecCount);
+    var res = dataCodewords.concat(new Array(ecCount).fill(0));
+    for (var i = 0; i < dataCodewords.length; i++) {
+      var coef = res[i];
+      if (coef === 0) continue;
+      for (var j = 0; j < gen.length; j++) {
+        res[i + j] ^= gfMul(gen[j], coef);
+      }
+    }
+    return res.slice(dataCodewords.length);
+  }
+
+  // Polynomial helpers over GF(256), coefficients arrays with index 0 = highest degree (like above) OR
+  // we use "coefficient at index i means x^i" (ascending) for decoder convenience. We'll use ascending here.
+  function polyEvalAsc(poly, x) {
+    // poly ascending: poly[0] + poly[1]*x + ...
+    var result = 0;
+    for (var i = poly.length - 1; i >= 0; i--) {
+      result = gfMul(result, x) ^ poly[i];
+    }
+    return result;
+  }
+
+  // RS decode with error correction. codewords: array of bytes (length = dataLen+ecCount), ascending order
+  // as physically transmitted (codewords[0] is first data codeword ... last ecCount are EC codewords).
+  // Returns corrected data codewords (length = codewords.length-ecCount) or null if uncorrectable.
+  function rsDecode(codewords, ecCount) {
+    var n = codewords.length;
+    // Work with polynomial in ascending powers where coefficient index i corresponds to codeword
+    // position (n-1-i) i.e. received(x) = c0*x^(n-1) + c1*x^(n-2) + ... We instead directly compute
+    // syndromes S_i = received(alpha^i) treating codewords as coefficients from highest degree first.
+    var syndromes = new Array(ecCount).fill(0);
+    var allZero = true;
+    for (var i = 0; i < ecCount; i++) {
+      var s = 0;
+      // Horner's method over codewords array (index 0 = most significant term)
+      for (var k = 0; k < n; k++) {
+        s = gfMul(s, GF_EXP[i]) ^ codewords[k];
+      }
+      syndromes[i] = s;
+      if (s !== 0) allZero = false;
+    }
+    if (allZero) return codewords.slice(0, n - ecCount);
+
+    // Berlekamp-Massey to find error locator polynomial (ascending powers, sigma[0]=1)
+    var sigma = [1];
+    var prevSigma = [1];
+    var prevM = 1;
+    var b = 1;
+    for (var iter = 0; iter < ecCount; iter++) {
+      var delta = syndromes[iter];
+      for (var i2 = 1; i2 < sigma.length; i2++) {
+        delta ^= gfMul(sigma[i2], syndromes[iter - i2]);
+      }
+      if (delta === 0) {
+        prevM++;
+      } else {
+        if (2 * (sigma.length - 1) <= iter) {
+          var t = sigma.slice();
+          var scale = gfDiv(delta, b);
+          var shifted = new Array(prevM).fill(0).concat(prevSigma.map(function (c) { return gfMul(c, scale); }));
+          var newSigma = new Array(Math.max(sigma.length, shifted.length)).fill(0);
+          for (var i3 = 0; i3 < sigma.length; i3++) newSigma[i3] ^= sigma[i3];
+          for (var i4 = 0; i4 < shifted.length; i4++) newSigma[i4] ^= shifted[i4];
+          prevSigma = t;
+          sigma = newSigma;
+          b = delta;
+          prevM = 1;
+        } else {
+          var scale2 = gfDiv(delta, b);
+          var shifted2 = new Array(prevM).fill(0).concat(prevSigma.map(function (c) { return gfMul(c, scale2); }));
+          var newSigma2 = new Array(Math.max(sigma.length, shifted2.length)).fill(0);
+          for (var i5 = 0; i5 < sigma.length; i5++) newSigma2[i5] ^= sigma[i5];
+          for (var i6 = 0; i6 < shifted2.length; i6++) newSigma2[i6] ^= shifted2[i6];
+          sigma = newSigma2;
+          prevM++;
+        }
+      }
+    }
+    var errCount = sigma.length - 1;
+    if (errCount <= 0) return null;
+    if (errCount > ecCount / 2) return null;
+
+    // Chien search: find roots of sigma -> error positions.
+    // received(x) coefficients correspond to codewords[0..n-1] as degree n-1..0.
+    // A root alpha^-j of sigma corresponds to error at codeword index (n-1-j) using 0-based degree j.
+    var errPositions = [];
+    for (var j = 0; j < n; j++) {
+      // evaluate sigma at alpha^j ; error location number X_k = alpha^j corresponds to position with
+      // exponent j from the LOW end. We map degree exponent -> array index (n-1-j).
+      var xInv = GF_EXP[(255 - (j % 255)) % 255];
+      var val = polyEvalAsc(sigma, xInv);
+      if (val === 0) {
+        var pos = n - 1 - j;
+        if (pos < 0 || pos >= n) return null;
+        errPositions.push({ pos: pos, exp: j });
+      }
+    }
+    if (errPositions.length !== errCount) return null;
+
+    // Error evaluator polynomial: omega(x) = [S(x) * sigma(x)] mod x^ecCount, S ascending with S[0]=S_1.
+    var Sasc = syndromes.slice(); // S[i] = syndrome_{i+1}, ascending index i => power i
+    var omega = new Array(ecCount).fill(0);
+    for (var a = 0; a < ecCount; a++) {
+      for (var c = 0; c < sigma.length; c++) {
+        if (a - c < 0) continue;
+        if (a - c >= Sasc.length) continue;
+        omega[a] ^= gfMul(sigma[c], Sasc[a - c]);
+      }
+    }
+    // formal derivative of sigma (ascending): sigma'(x) drops even-power terms, halves odd ones (GF(2) => just drop even indices, keep odd term coefficients shifted)
+    var sigmaDeriv = [];
+    for (var d = 1; d < sigma.length; d += 2) {
+      sigmaDeriv.push(sigma[d]);
+    }
+
+    var out = codewords.slice();
+    for (var e = 0; e < errPositions.length; e++) {
+      var Xk = GF_EXP[errPositions[e].exp];
+      var XkInv = GF_EXP[(255 - errPositions[e].exp % 255) % 255];
+      var numerator = polyEvalAsc(omega, XkInv);
+      var denominator = 0;
+      for (var f = 0; f < sigmaDeriv.length; f++) {
+        denominator ^= gfMul(sigmaDeriv[f], (function pow(base, p) {
+          var r = 1;
+          var bb = base;
+          while (p > 0) { if (p & 1) r = gfMul(r, bb); bb = gfMul(bb, bb); p >>= 1; }
+          return r;
+        })(XkInv, 2 * f));
+      }
+      if (denominator === 0) return null;
+      var magnitude = gfMul(numerator, gfDiv(Xk, denominator));
+      // Forney: e_k = Xk * omega(Xk^-1) / sigma'(Xk^-1) ; sign is identity in GF(2^m)
+      var pos2 = errPositions[e].pos;
+      out[pos2] = out[pos2] ^ magnitude;
+    }
+    // Verify by recomputing syndromes
+    var check = new Array(ecCount).fill(0);
+    for (var i7 = 0; i7 < ecCount; i7++) {
+      var s2 = 0;
+      for (var k2 = 0; k2 < n; k2++) s2 = gfMul(s2, GF_EXP[i7]) ^ out[k2];
+      check[i7] = s2;
+    }
+    for (var q = 0; q < ecCount; q++) if (check[q] !== 0) return null;
+    return out.slice(0, n - ecCount);
+  }
+
+  // ---------- Function pattern construction ----------
+  function buildFunctionMask(version) {
+    var size = sizeForVersion(version);
+    var isFn = [];
+    for (var i = 0; i < size; i++) isFn.push(new Uint8Array(size));
+    function setFn(r, c) { if (r >= 0 && r < size && c >= 0 && c < size) isFn[r][c] = 1; }
+    function block(r0, c0, r1, c1) {
+      for (var r = r0; r <= r1; r++) for (var c = c0; c <= c1; c++) setFn(r, c);
+    }
+    // Finder patterns + separators (8x8 zone each corner, top-left/top-right/bottom-left)
+    block(0, 0, 7, 7);
+    block(0, size - 8, 7, size - 1);
+    block(size - 8, 0, size - 1, 7);
+    // Timing patterns
+    for (var t = 8; t < size - 8; t++) { setFn(6, t); setFn(t, 6); }
+    // Format info areas (redundant with corners above for some cells, harmless)
+    for (var i2 = 0; i2 <= 8; i2++) { setFn(8, i2); setFn(i2, 8); }
+    for (var i3 = 0; i3 < 8; i3++) { setFn(8, size - 1 - i3); setFn(size - 1 - i3, 8); }
+    // Alignment patterns
+    var coords = ALIGN[String(version)] || [];
+    for (var ci = 0; ci < coords.length; ci++) {
+      for (var cj = 0; cj < coords.length; cj++) {
+        var r = coords[ci], c = coords[cj];
+        // skip the three that overlap finder patterns
+        if ((r === 6 && c === 6) || (r === 6 && c === size - 7) || (r === size - 7 && c === 6)) continue;
+        block(r - 2, c - 2, r + 2, c + 2);
+      }
+    }
+    // Version info blocks (version >= 7)
+    if (version >= 7) {
+      block(0, size - 11, 5, size - 9);
+      block(size - 11, 0, size - 9, 5);
+    }
+    return { size: size, isFn: isFn, alignCoords: coords };
+  }
+
+  // ---------- Data/EC codeword placement order (list of {r,c}) ----------
+  function buildPlacementOrder(fm) {
+    var size = fm.size, isFn = fm.isFn;
+    var order = [];
+    var right = size - 1;
+    while (right >= 1) {
+      if (right === 6) right = 5;
+      var upward = ((right + 1) & 2) === 0;
+      for (var vert = 0; vert < size; vert++) {
+        var y = upward ? (size - 1 - vert) : vert;
+        for (var k = 0; k < 2; k++) {
+          var x = right - k;
+          if (!isFn[y][x]) order.push([y, x]);
+        }
+      }
+      right -= 2;
+    }
+    return order;
+  }
+
+  // ---------- Mask patterns ----------
+  function maskBit(maskId, r, c) {
+    switch (maskId) {
+      case 0: return (r + c) % 2 === 0;
+      case 1: return r % 2 === 0;
+      case 2: return c % 3 === 0;
+      case 3: return (r + c) % 3 === 0;
+      case 4: return (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0;
+      case 5: return ((r * c) % 2) + ((r * c) % 3) === 0;
+      case 6: return (((r * c) % 2) + ((r * c) % 3)) % 2 === 0;
+      case 7: return (((r + c) % 2) + ((r * c) % 3)) % 2 === 0;
+      default: throw new Error('bad mask');
+    }
+  }
+
+  // ---------- Format / version info coordinate lists ----------
+  function formatCoordsA() {
+    var out = [];
+    for (var i = 0; i <= 5; i++) out.push([i, 8]);      // rows 0-5, col 8   (bits 0..5)
+    out.push([7, 8]);                                    // bit 6
+    out.push([8, 8]);                                    // bit 7
+    out.push([8, 7]);                                    // bit 8
+    for (var i2 = 9; i2 < 15; i2++) out.push([8, 14 - i2]); // bits 9..14 -> col 5..0, row 8
+    return out; // index = bit i (0..14), value = [row,col]
+  }
+  function formatCoordsB(size) {
+    var out = [];
+    for (var i = 0; i < 8; i++) out.push([8, size - 1 - i]); // bits 0..7
+    for (var i2 = 8; i2 < 15; i2++) out.push([size - 15 + i2, 8]); // bits 8..14
+    return out;
+  }
+  function versionCoordsA(size) {
+    // "bottom-left" per nayuki description: x = size-11+j, y = i/3  (j=i%3)
+    var out = [];
+    for (var i = 0; i < 18; i++) {
+      var j = i % 3, row = Math.floor(i / 3);
+      out.push([row, size - 11 + j]);
+    }
+    return out;
+  }
+  function versionCoordsB(size) {
+    // "top-right": x = i/3, y = size-11+j
+    var out = [];
+    for (var i = 0; i < 18; i++) {
+      var j = i % 3, col = Math.floor(i / 3);
+      out.push([size - 11 + j, col]);
+    }
+    return out;
+  }
+
+  function hamming(a, b) {
+    var d = 0;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) d++;
+    return d;
+  }
+
+  // ---------- High level: encode a full matrix (used for testing) ----------
+  function encodeMatrix(bytes, eccLevel, version, maskId) {
+    var ecRow = EC_TABLE[String(version)][eccLevel];
+    var ec = ecRow[0], b1 = ecRow[1], d1 = ecRow[2], b2 = ecRow[3], d2 = ecRow[4];
+    var totalData = b1 * d1 + b2 * d2;
+
+    // Build bit stream: mode(4)=0100 byte, count indicator (8 or 16), data bytes.
+    var bits = [];
+    function pushBits(value, len) {
+      for (var i = len - 1; i >= 0; i--) bits.push((value >>> i) & 1);
+    }
+    pushBits(0x4, 4);
+    var countLen = version <= 9 ? 8 : 16;
+    pushBits(bytes.length, countLen);
+    for (var i = 0; i < bytes.length; i++) pushBits(bytes[i], 8);
+    // terminator (up to 4 bits)
+    var capacityBits = totalData * 8;
+    for (var t = 0; t < 4 && bits.length < capacityBits; t++) bits.push(0);
+    while (bits.length % 8 !== 0) bits.push(0);
+    var dataCodewords = [];
+    for (var i2 = 0; i2 < bits.length; i2 += 8) {
+      var byte = 0;
+      for (var k = 0; k < 8; k++) byte = (byte << 1) | bits[i2 + k];
+      dataCodewords.push(byte);
+    }
+    var padToggle = 0xEC;
+    while (dataCodewords.length < totalData) {
+      dataCodewords.push(padToggle);
+      padToggle = padToggle === 0xEC ? 0x11 : 0xEC;
+    }
+    dataCodewords = dataCodewords.slice(0, totalData);
+
+    // Split into blocks, RS encode each.
+    var blocks = [];
+    var idx = 0;
+    for (var g = 0; g < b1; g++) { blocks.push(dataCodewords.slice(idx, idx + d1)); idx += d1; }
+    for (var g2 = 0; g2 < b2; g2++) { blocks.push(dataCodewords.slice(idx, idx + d2)); idx += d2; }
+    var ecBlocks = blocks.map(function (blk) { return rsEncode(blk, ec); });
+
+    // Interleave data codewords then EC codewords.
+    var maxData = Math.max(d1, d2 || 0);
+    var interleaved = [];
+    for (var col = 0; col < maxData; col++) {
+      for (var bi = 0; bi < blocks.length; bi++) {
+        if (col < blocks[bi].length) interleaved.push(blocks[bi][col]);
+      }
+    }
+    for (var col2 = 0; col2 < ec; col2++) {
+      for (var bi2 = 0; bi2 < ecBlocks.length; bi2++) {
+        interleaved.push(ecBlocks[bi2][col2]);
+      }
+    }
+
+    var fm = buildFunctionMask(version);
+    var size = fm.size;
+    var modules = [];
+    for (var r = 0; r < size; r++) modules.push(new Uint8Array(size));
+
+    var order = buildPlacementOrder(fm);
+    var bitIdx = 0;
+    var totalBits = interleaved.length * 8;
+    for (var oi = 0; oi < order.length && bitIdx < totalBits; oi++) {
+      var rr = order[oi][0], cc = order[oi][1];
+      var byteI = bitIdx >> 3, bitI = 7 - (bitIdx & 7);
+      var bitVal = (interleaved[byteI] >>> bitI) & 1;
+      modules[rr][cc] = bitVal;
+      bitIdx++;
+    }
+    // Apply mask to data region only
+    for (var oi2 = 0; oi2 < order.length; oi2++) {
+      var rr2 = order[oi2][0], cc2 = order[oi2][1];
+      if (maskBit(maskId, rr2, cc2)) modules[rr2][cc2] ^= 1;
+    }
+    // Finder patterns
+    function drawFinder(r0, c0) {
+      for (var r = -1; r <= 7; r++) {
+        for (var c = -1; c <= 7; c++) {
+          var rr3 = r0 + r, cc3 = c0 + c;
+          if (rr3 < 0 || rr3 >= size || cc3 < 0 || cc3 >= size) continue;
+          var dark;
+          if (r === -1 || r === 7 || c === -1 || c === 7) dark = 0; // separator
+          else if (r === 0 || r === 6 || c === 0 || c === 6) dark = 1;
+          else if (r >= 2 && r <= 4 && c >= 2 && c <= 4) dark = 1;
+          else dark = 0;
+          modules[rr3][cc3] = dark;
+        }
+      }
+    }
+    drawFinder(0, 0);
+    drawFinder(0, size - 7);
+    drawFinder(size - 7, 0);
+    // Timing patterns
+    for (var t2 = 8; t2 < size - 8; t2++) {
+      modules[6][t2] = (t2 % 2 === 0) ? 1 : 0;
+      modules[t2][6] = (t2 % 2 === 0) ? 1 : 0;
+    }
+    // Alignment patterns
+    var coords = fm.alignCoords;
+    for (var ci = 0; ci < coords.length; ci++) {
+      for (var cj = 0; cj < coords.length; cj++) {
+        var rC = coords[ci], cC = coords[cj];
+        if ((rC === 6 && cC === 6) || (rC === 6 && cC === size - 7) || (rC === size - 7 && cC === 6)) continue;
+        for (var dr = -2; dr <= 2; dr++) {
+          for (var dc = -2; dc <= 2; dc++) {
+            var rr4 = rC + dr, cc4 = cC + dc;
+            var ring = Math.max(Math.abs(dr), Math.abs(dc));
+            modules[rr4][cc4] = (ring === 1) ? 0 : 1;
+          }
+        }
+      }
+    }
+    // Dark module
+    modules[size - 8][8] = 1;
+    // Format info
+    var fmtBits = FORMAT_STRINGS[eccLevel + String(maskId)];
+    var coordsA = formatCoordsA(), coordsB = formatCoordsB(size);
+    for (var bi3 = 0; bi3 < 15; bi3++) {
+      var bitc = fmtBits.charCodeAt(bi3) - 48; // '0'/'1'
+      // string index 0 = bit14 (MSB) ... index14=bit0. coordsA[i] expects bit i (0=LSB).
+      var bitIndex = 14 - bi3;
+      var rc = coordsA[bitIndex]; modules[rc[0]][rc[1]] = bitc;
+      var rc2 = coordsB[bitIndex]; modules[rc2[0]][rc2[1]] = bitc;
+    }
+    // Version info
+    if (version >= 7) {
+      var verBits = VERSION_STRINGS[String(version)];
+      var vA = versionCoordsA(size), vB = versionCoordsB(size);
+      for (var bi4 = 0; bi4 < 18; bi4++) {
+        var bitv = verBits.charCodeAt(bi4) - 48;
+        var bitIndexV = 17 - bi4;
+        var rcv = vA[bitIndexV]; modules[rcv[0]][rcv[1]] = bitv;
+        var rcv2 = vB[bitIndexV]; modules[rcv2[0]][rcv2[1]] = bitv;
+      }
+    }
+    return { size: size, modules: modules };
+  }
+
+  // ---------- High level: decode a full sampled matrix ----------
+  // modules: array of Uint8Array/array (0/1), size x size, WITHOUT unmasking (as physically read).
+  function decodeMatrix(modules, size) {
+    var version = Math.round((size - 17) / 4);
+    if (version < 1 || version > 40) throw new Error('bad size');
+
+    // --- Format info (try both copies, best match) ---
+    var coordsA = formatCoordsA(), coordsB = formatCoordsB(size);
+    function readBits(coordList, n) {
+      var arr = [];
+      for (var i = 0; i < n; i++) { var rc = coordList[i]; arr.push(modules[rc[0]][rc[1]]); }
+      return arr;
+    }
+    var rawA = readBits(coordsA, 15); // index = bit i (0..14) low..high
+    var rawB = readBits(coordsB, 15);
+    function toStr14to0(arr) {
+      // arr[i] = bit i (0=LSB). Build MSB..LSB string to match FORMAT_STRINGS convention.
+      var s = '';
+      for (var i = 14; i >= 0; i--) s += arr[i];
+      return s;
+    }
+    var strA = toStr14to0(rawA), strB = toStr14to0(rawB);
+    var bestFmt = null, bestDist = 99, bestKey = null;
+    for (var key in FORMAT_STRINGS) {
+      var cand = FORMAT_STRINGS[key];
+      var dA = hamming(cand, strA), dB = hamming(cand, strB);
+      var d = Math.min(dA, dB);
+      if (d < bestDist) { bestDist = d; bestFmt = cand; bestKey = key; }
+    }
+    if (bestDist > 3) throw new Error('format info unrecoverable (dist ' + bestDist + ')');
+    var eccLevel = bestKey[0];
+    var maskId = parseInt(bestKey.slice(1), 10);
+
+    // --- Version info cross-check (version >= 7) ---
+    if (version >= 7 && VERSION_STRINGS[String(version)]) {
+      var vA = versionCoordsA(size), vB = versionCoordsB(size);
+      var rawVA = readBits(vA, 18), rawVB = readBits(vB, 18);
+      function toStr17to0(arr) { var s = ''; for (var i = 17; i >= 0; i--) s += arr[i]; return s; }
+      var vStrA = toStr17to0(rawVA), vStrB = toStr17to0(rawVB);
+      var bestV = null, bestVDist = 99;
+      for (var vk in VERSION_STRINGS) {
+        var vcand = VERSION_STRINGS[vk];
+        var d1v = hamming(vcand, vStrA), d2v = hamming(vcand, vStrB);
+        var dmin = Math.min(d1v, d2v);
+        if (dmin < bestVDist) { bestVDist = dmin; bestV = parseInt(vk, 10); }
+      }
+      if (bestVDist <= 3 && bestV !== version) {
+        version = bestV;
+        size = sizeForVersion(version);
+        // NOTE: caller should have sampled with the correct size already; mismatch is surfaced via thrown error upstream ideally.
+      }
+    }
+
+    var fm = buildFunctionMask(version);
+    var order = buildPlacementOrder(fm);
+
+    // Unmask + read bits along placement order.
+    var totalBits = order.length;
+    var bitsArr = new Uint8Array(totalBits);
+    for (var oi = 0; oi < order.length; oi++) {
+      var r = order[oi][0], c = order[oi][1];
+      var v2 = modules[r][c];
+      if (maskBit(maskId, r, c)) v2 ^= 1;
+      bitsArr[oi] = v2;
+    }
+    var totalCodewordsCount = totalBits >> 3;
+    var codewords = new Array(totalCodewordsCount);
+    for (var ci2 = 0; ci2 < totalCodewordsCount; ci2++) {
+      var byte = 0;
+      for (var k = 0; k < 8; k++) byte = (byte << 1) | bitsArr[ci2 * 8 + k];
+      codewords[ci2] = byte;
+    }
+
+    var ecRow = EC_TABLE[String(version)][eccLevel];
+    var ec = ecRow[0], b1 = ecRow[1], d1 = ecRow[2], b2 = ecRow[3], d2 = ecRow[4];
+    var numBlocks = b1 + b2;
+    var maxData = Math.max(d1, d2 || 0);
+
+    // De-interleave data codewords
+    var blockData = [];
+    for (var bi = 0; bi < numBlocks; bi++) blockData.push([]);
+    var pos = 0;
+    for (var col = 0; col < maxData; col++) {
+      for (var bi2 = 0; bi2 < numBlocks; bi2++) {
+        var thisLen = bi2 < b1 ? d1 : d2;
+        if (col < thisLen) { blockData[bi2].push(codewords[pos]); pos++; }
+      }
+    }
+    // De-interleave EC codewords
+    var blockEc = [];
+    for (var bi3 = 0; bi3 < numBlocks; bi3++) blockEc.push([]);
+    for (var col2 = 0; col2 < ec; col2++) {
+      for (var bi4 = 0; bi4 < numBlocks; bi4++) {
+        blockEc[bi4].push(codewords[pos]); pos++;
+      }
+    }
+
+    var correctedBlocks = [];
+    for (var bi5 = 0; bi5 < numBlocks; bi5++) {
+      var full = blockData[bi5].concat(blockEc[bi5]);
+      var corrected = rsDecode(full, ec);
+      if (corrected === null) throw new Error('RS decode failed on block ' + bi5);
+      correctedBlocks.push(corrected);
+    }
+    var allData = [];
+    for (var bi6 = 0; bi6 < numBlocks; bi6++) allData = allData.concat(correctedBlocks[bi6]);
+
+    // Parse bitstream: mode(4) + count + bytes (byte mode only).
+    var bitPos = 0;
+    function takeBits(n) {
+      var v3 = 0;
+      for (var i = 0; i < n; i++) {
+        var byteI = bitPos >> 3, bitI = 7 - (bitPos & 7);
+        var bit = (allData[byteI] >>> bitI) & 1;
+        v3 = (v3 << 1) | bit;
+        bitPos++;
+      }
+      return v3;
+    }
+    var mode = takeBits(4);
+    if (mode !== 0x4) throw new Error('unsupported mode ' + mode + ' (only byte mode supported)');
+    var countLen = version <= 9 ? 8 : 16;
+    var count = takeBits(countLen);
+    var out = new Uint8Array(count);
+    for (var i8 = 0; i8 < count; i8++) out[i8] = takeBits(8);
+    return { bytes: out, version: version, eccLevel: eccLevel, maskId: maskId };
+  }
+
+  var QR = {
+    sizeForVersion: sizeForVersion,
+    buildFunctionMask: buildFunctionMask,
+    buildPlacementOrder: buildPlacementOrder,
+    maskBit: maskBit,
+    encodeMatrix: encodeMatrix,
+    decodeMatrix: decodeMatrix,
+    rsEncode: rsEncode,
+    rsDecode: rsDecode,
+    EC_TABLE: EC_TABLE,
+    ALIGN: ALIGN,
+    FORMAT_STRINGS: FORMAT_STRINGS,
+    VERSION_STRINGS: VERSION_STRINGS
+  };
+
+  if (typeof module !== 'undefined' && module.exports) module.exports = QR;
+  else root.QR = QR;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+// Port of FountainEncoder.java's deterministic frame composition (session+seq -> source block indices).
+(function (root) {
+  'use strict';
+
+  function u32(x) { return x >>> 0; }
+
+  function frameSeed(sessionId, seq) {
+    // seq may exceed 32 bits mathematically but on the wire it's always a uint32; caller passes uint32.
+    var h = u32(Math.imul(u32(sessionId + 1), 0x9e3779b1));
+    h = u32(h ^ u32(seq + 0x85ebca6b));
+    h = u32(Math.imul(u32(h ^ (h >>> 13)), 0xc2b2ae35));
+    return u32(h ^ (h >>> 16));
+  }
+
+  function Rng(seed) { this.state = u32(seed); }
+  Rng.prototype.nextUnsigned = function () {
+    this.state = u32(this.state + 0x9e3779b9);
+    var t = u32(this.state ^ (this.state >>> 16));
+    t = u32(Math.imul(t, 0x21f0aaad));
+    t = u32(t ^ (t >>> 15));
+    t = u32(Math.imul(t, 0x735a2d97));
+    t = u32(t ^ (t >>> 15));
+    return t;
+  };
+  Rng.prototype.nextInt = function (bound) {
+    return this.nextUnsigned() % bound;
+  };
+
+  var REPAIR_DEGREE_MIN = 4;
+  var REPAIR_DEGREE_MAX = 24;
+
+  function repairIndices(sessionId, seq, k) {
+    var rnd = new Rng(frameSeed(sessionId, seq));
+    var d = Math.min(k, REPAIR_DEGREE_MIN + rnd.nextInt(REPAIR_DEGREE_MAX - REPAIR_DEGREE_MIN + 1));
+    var set = new Set();
+    while (set.size < d) set.add(rnd.nextInt(k));
+    return Array.from(set);
+  }
+
+  function frameComposition(sessionId, seq, k) {
+    var cycle = 2 * k;
+    var pos = seq % cycle;
+    if (pos < k) return [pos];
+    return repairIndices(sessionId, seq, k);
+  }
+
+  var Fountain = { frameSeed: frameSeed, Rng: Rng, repairIndices: repairIndices, frameComposition: frameComposition };
+  if (typeof module !== 'undefined' && module.exports) module.exports = Fountain;
+  else root.Fountain = Fountain;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+// LT-code style peeling decoder matching FountainEncoder.java's frame composition.
+(function (root) {
+  var Fountain = (typeof module !== 'undefined' && module.exports) ? require('./fountain.js') : root.Fountain;
+
+  function FountainDecoder(sessionId, k, blockLen) {
+    this.sessionId = sessionId;
+    this.k = k;
+    this.blockLen = blockLen;
+    this.known = new Array(k).fill(null); // Uint8Array or null
+    this.knownCount = 0;
+    this.seenSeq = new Set();
+    this.pending = []; // {idxSet: Set<number>, data: Uint8Array}, size(idxSet) >= 2
+    this.workQueue = []; // equations with idxSet.size === 1, awaiting resolution
+  }
+
+  FountainDecoder.prototype.isComplete = function () { return this.knownCount === this.k; };
+
+  FountainDecoder.prototype._xorInto = function (data, otherIdx) {
+    var other = this.known[otherIdx];
+    for (var i = 0; i < data.length; i++) data[i] ^= other[i];
+  };
+
+  FountainDecoder.prototype.addFrame = function (seq, blockData) {
+    if (this.seenSeq.has(seq)) return;
+    this.seenSeq.add(seq);
+    var idxList = Fountain.frameComposition(this.sessionId, seq, this.k);
+    var idxSet = new Set(idxList);
+    var data = Uint8Array.from(blockData);
+    this._enqueue({ idxSet: idxSet, data: data });
+    this._drain();
+  };
+
+  FountainDecoder.prototype._enqueue = function (eq) {
+    var arr = Array.from(eq.idxSet);
+    for (var i = 0; i < arr.length; i++) {
+      var ix = arr[i];
+      if (this.known[ix] !== null) {
+        this._xorInto(eq.data, ix);
+        eq.idxSet.delete(ix);
+      }
+    }
+    if (eq.idxSet.size === 0) return;
+    if (eq.idxSet.size === 1) {
+      this.workQueue.push(eq);
+      return;
+    }
+    this.pending.push(eq);
+  };
+
+  FountainDecoder.prototype._drain = function () {
+    while (this.workQueue.length > 0) {
+      var eq = this.workQueue.shift();
+      var only = eq.idxSet.values().next().value;
+      if (this.known[only] !== null) continue; // already resolved via another path
+      this.known[only] = eq.data;
+      this.knownCount++;
+      var stillPending = [];
+      for (var p = 0; p < this.pending.length; p++) {
+        var pe = this.pending[p];
+        if (pe.idxSet.has(only)) {
+          this._xorInto(pe.data, only);
+          pe.idxSet.delete(only);
+          if (pe.idxSet.size === 0) continue;
+          if (pe.idxSet.size === 1) { this.workQueue.push(pe); continue; }
+        }
+        stillPending.push(pe);
+      }
+      this.pending = stillPending;
+    }
+  };
+
+  FountainDecoder.prototype.assemble = function (totalLen) {
+    if (!this.isComplete()) return null;
+    var out = new Uint8Array(this.k * this.blockLen);
+    for (var i = 0; i < this.k; i++) out.set(this.known[i], i * this.blockLen);
+    return out.slice(0, totalLen);
+  };
+
+  var Exp = { FountainDecoder: FountainDecoder };
+  if (typeof module !== 'undefined' && module.exports) module.exports = Exp;
+  else root.FountainDecoderModule = Exp;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+// Wire format matching Protocol.java (Decimen v3) + DCF2 container.
+(function (root) {
+  'use strict';
+
+  var HEADER_LEN = 22;
+  var WIRE_VERSION = 3;
+
+  function fnv1a(bytes) {
+    var h = 0x811c9dc5 | 0;
+    for (var i = 0; i < bytes.length; i++) {
+      h = h ^ (bytes[i] & 0xff);
+      h = Math.imul(h, 0x01000193);
+    }
+    return h | 0; // Java int (signed)
+  }
+
+  function parseFrame(bytes) {
+    if (bytes.length < HEADER_LEN) return null;
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    if (dv.getUint8(0) !== 0xd1 || dv.getUint8(1) !== 0xc3) return null;
+    var version = dv.getUint8(2);
+    if (version !== WIRE_VERSION) return null;
+    var sessionId = dv.getUint16(4, true);
+    var seq = dv.getUint32(6, true);
+    var k = dv.getUint16(10, true);
+    var blockLen = dv.getUint16(12, true);
+    var totalLen = dv.getUint32(14, true);
+    var payloadFnv = dv.getInt32(18, true);
+    var block = bytes.slice(HEADER_LEN, HEADER_LEN + blockLen);
+    if (block.length !== blockLen) return null;
+    return { sessionId: sessionId, seq: seq, k: k, blockLen: blockLen, totalLen: totalLen, payloadFnv: payloadFnv, block: block };
+  }
+
+  function packFrame(sessionId, seq, k, blockLen, totalLen, payloadFnv, block) {
+    var buf = new ArrayBuffer(HEADER_LEN + blockLen);
+    var dv = new DataView(buf);
+    dv.setUint8(0, 0xd1); dv.setUint8(1, 0xc3); dv.setUint8(2, WIRE_VERSION); dv.setUint8(3, 0);
+    dv.setUint16(4, sessionId, true);
+    dv.setUint32(6, seq, true);
+    dv.setUint16(10, k, true);
+    dv.setUint16(12, blockLen, true);
+    dv.setUint32(14, totalLen, true);
+    dv.setInt32(18, payloadFnv, true);
+    var out = new Uint8Array(buf);
+    out.set(block, HEADER_LEN);
+    return out;
+  }
+
+  // ---- DCF2 container ----
+  function parseContainer(bytes) {
+    if (bytes.length < 49) return null;
+    if (bytes[0] !== 0x44 || bytes[1] !== 0x43 || bytes[2] !== 0x46 || bytes[3] !== 0x32) return null; // 'DCF2'
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var useGzip = dv.getUint8(4) === 1;
+    var nameLen = dv.getUint16(5, true);
+    var typeLen = dv.getUint16(7, true);
+    var originalLen = dv.getUint32(9, true);
+    var transmittedLen = dv.getUint32(13, true);
+    var sha256 = bytes.slice(17, 49);
+    var off = 49;
+    var nameBytes = bytes.slice(off, off + nameLen); off += nameLen;
+    var typeBytes = bytes.slice(off, off + typeLen); off += typeLen;
+    var transmitted = bytes.slice(off, off + transmittedLen); off += transmittedLen;
+    var decoder = new TextDecoder('utf-8');
+    return {
+      useGzip: useGzip,
+      name: decoder.decode(nameBytes),
+      type: decoder.decode(typeBytes),
+      originalLen: originalLen,
+      transmittedLen: transmittedLen,
+      sha256: sha256,
+      transmitted: transmitted
+    };
+  }
+
+  var Protocol = { HEADER_LEN: HEADER_LEN, WIRE_VERSION: WIRE_VERSION, fnv1a: fnv1a, parseFrame: parseFrame, packFrame: packFrame, parseContainer: parseContainer };
+  if (typeof module !== 'undefined' && module.exports) module.exports = Protocol;
+  else root.Protocol = Protocol;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+// Image-level QR localization: binarize, find finder patterns, build homography, sample module grid.
+(function (root) {
+  'use strict';
+
+  // ---------- Binarization ----------
+  function toGray(rgba, w, h) {
+    var gray = new Uint8ClampedArray(w * h);
+    for (var i = 0, p = 0; i < gray.length; i++, p += 4) {
+      gray[i] = (rgba[p] * 0.299 + rgba[p + 1] * 0.587 + rgba[p + 2] * 0.114) | 0;
+    }
+    return gray;
+  }
+
+  // Local adaptive threshold using a box-blur (integral image) average minus a bias.
+  function adaptiveBinarize(gray, w, h, radius) {
+    radius = radius || Math.max(6, Math.floor(Math.min(w, h) / 24));
+    var integral = new Float64Array((w + 1) * (h + 1));
+    for (var y = 0; y < h; y++) {
+      var rowSum = 0;
+      for (var x = 0; x < w; x++) {
+        rowSum += gray[y * w + x];
+        integral[(y + 1) * (w + 1) + (x + 1)] = integral[y * (w + 1) + (x + 1)] + rowSum;
+      }
+    }
+    function areaSum(x0, y0, x1, y1) {
+      x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+      x1 = Math.min(w - 1, x1); y1 = Math.min(h - 1, y1);
+      if (x1 < x0 || y1 < y0) return 0;
+      var A = integral[y0 * (w + 1) + x0];
+      var B = integral[y0 * (w + 1) + (x1 + 1)];
+      var C = integral[(y1 + 1) * (w + 1) + x0];
+      var D = integral[(y1 + 1) * (w + 1) + (x1 + 1)];
+      return D - B - C + A;
+    }
+    var bin = new Uint8Array(w * h); // 1 = dark
+    for (var y2 = 0; y2 < h; y2++) {
+      for (var x2 = 0; x2 < w; x2++) {
+        var x0 = x2 - radius, y0 = y2 - radius, x1 = x2 + radius, y1 = y2 + radius;
+        var count = (Math.min(w - 1, x1) - Math.max(0, x0) + 1) * (Math.min(h - 1, y1) - Math.max(0, y0) + 1);
+        var avg = areaSum(x0, y0, x1, y1) / count;
+        bin[y2 * w + x2] = gray[y2 * w + x2] < avg - 7 ? 1 : 0;
+      }
+    }
+    return bin;
+  }
+
+  // ---------- Finder-pattern style ratio scanning ----------
+  // Generic: find centers where alternating run-lengths match `ratio` (array of ints), scanning rows then confirming columns.
+  function matchesRatio(counts, ratio, tolerance) {
+    var total = 0;
+    for (var i = 0; i < counts.length; i++) total += counts[i];
+    if (total === 0) return false;
+    var ratioSum = 0; for (var r = 0; r < ratio.length; r++) ratioSum += ratio[r];
+    var unit = total / ratioSum;
+    var maxVariance = unit * tolerance;
+    for (var j = 0; j < counts.length; j++) {
+      if (Math.abs(counts[j] - ratio[j] * unit) > maxVariance * ratio[j]) return false;
+    }
+    return true;
+  }
+
+  function findRatioCentersInRow(bin, w, h, y, ratio, tolerance) {
+    var results = [];
+    var counts = new Array(ratio.length).fill(0);
+    var idx = 0;
+    var lastVal = bin[y * w];
+    counts[0] = 1;
+    for (var x = 1; x < w; x++) {
+      var v = bin[y * w + x];
+      if (v === lastVal) {
+        counts[idx]++;
+      } else {
+        idx++;
+        if (idx === ratio.length) {
+          if (lastVal === 1 && matchesRatio(counts, ratio, tolerance)) {
+            var center = x - counts[ratio.length - 1] - counts[ratio.length - 2] - Math.floor(counts[Math.floor(ratio.length / 2)] / 2);
+            // more precise center calc below; recompute directly
+          }
+          // slide window: drop oldest, shift
+          for (var s = 0; s < ratio.length - 1; s++) counts[s] = counts[s + 1];
+          counts[ratio.length - 1] = 0;
+          idx = ratio.length - 1;
+        }
+        counts[idx] = 1;
+        lastVal = v;
+      }
+      if (idx === ratio.length - 1 && lastVal === 1 !== undefined) {
+        // handled above via matchesRatio check at boundary; simpler alternative approach below
+      }
+    }
+    return results; // (unused path; superseded by scanLine below)
+  }
+
+  // Cleaner run-length scan producing candidate centers directly.
+  function scanLineForPattern(bin, w, getPixel, length, ratio, tolerance) {
+    // getPixel(i) returns 0/1 for i in [0,length)
+    var centers = [];
+    var runs = [];
+    var runVal = getPixel(0);
+    var runStart = 0;
+    for (var i = 1; i <= length; i++) {
+      var v = i < length ? getPixel(i) : -1;
+      if (v !== runVal) {
+        runs.push({ val: runVal, start: runStart, len: i - runStart });
+        runStart = i;
+        runVal = v;
+      }
+    }
+    for (var k = 0; k + ratio.length <= runs.length; k++) {
+      var slice = runs.slice(k, k + ratio.length);
+      if (slice[0].val !== 1) continue; // pattern must start dark
+      var counts = slice.map(function (r) { return r.len; });
+      if (matchesRatio(counts, ratio, tolerance)) {
+        var startPos = slice[0].start;
+        var endPos = slice[slice.length - 1].start + slice[slice.length - 1].len;
+        centers.push({ pos: (startPos + endPos) / 2, moduleSize: (endPos - startPos) / ratio.reduce(function (a, b) { return a + b; }, 0) });
+      }
+    }
+    return centers;
+  }
+
+  function findFinderCandidates(bin, w, h) {
+    var ratio = [1, 1, 3, 1, 1];
+    var tolerance = 0.5;
+    var hits = []; // {x,y,moduleSize}
+    var step = Math.max(1, Math.floor(h / 200));
+    for (var y = 0; y < h; y += step) {
+      var row = scanLineForPattern(bin, w, function (x) { return bin[y * w + x]; }, w, ratio, tolerance);
+      for (var i = 0; i < row.length; i++) {
+        var xC = row[i].pos;
+        // verify vertically through xC
+        var xInt = Math.round(xC);
+        if (xInt < 0 || xInt >= w) continue;
+        var col = scanLineForPattern(bin, h, function (yy) { return bin[yy * w + xInt]; }, h, ratio, tolerance);
+        // find a vertical hit close to y
+        var best = null, bestD = 1e9;
+        for (var j = 0; j < col.length; j++) {
+          var d = Math.abs(col[j].pos - y);
+          if (d < bestD) { bestD = d; best = col[j]; }
+        }
+        if (best && bestD < row[i].moduleSize * 3) {
+          hits.push({ x: xC, y: best.pos, moduleSize: (row[i].moduleSize + best.moduleSize) / 2 });
+        }
+      }
+    }
+    // cluster nearby hits
+    var clusters = [];
+    for (var h2 = 0; h2 < hits.length; h2++) {
+      var hp = hits[h2];
+      var found = null;
+      for (var c = 0; c < clusters.length; c++) {
+        var cl = clusters[c];
+        var dx = cl.x / cl.n - hp.x, dy = cl.y / cl.n - hp.y;
+        if (Math.sqrt(dx * dx + dy * dy) < Math.max(6, hp.moduleSize * 2)) { found = cl; break; }
+      }
+      if (found) { found.x += hp.x; found.y += hp.y; found.m += hp.moduleSize; found.n++; }
+      else clusters.push({ x: hp.x, y: hp.y, m: hp.moduleSize, n: 1 });
+    }
+    return clusters.map(function (c) { return { x: c.x / c.n, y: c.y / c.n, moduleSize: c.m / c.n, votes: c.n }; })
+      .filter(function (c) { return c.votes >= 2; });
+  }
+
+  function pickTriple(candidates) {
+    if (candidates.length < 3) return null;
+    candidates.sort(function (a, b) { return b.votes - a.votes; });
+    var pool = candidates.slice(0, Math.min(candidates.length, 12));
+    var best = null, bestScore = -1;
+    for (var i = 0; i < pool.length; i++) {
+      for (var j = i + 1; j < pool.length; j++) {
+        for (var k = 0; k < pool.length; k++) {
+          if (k === i || k === j) continue;
+          var A = pool[i], B = pool[j], C = pool[k];
+          // C is the right-angle vertex candidate (top-left); check module sizes similar
+          var msAvg = (A.moduleSize + B.moduleSize + C.moduleSize) / 3;
+          if (Math.max(A.moduleSize, B.moduleSize, C.moduleSize) / msAvg > 1.6) continue;
+          var CA = { x: A.x - C.x, y: A.y - C.y };
+          var CB = { x: B.x - C.x, y: B.y - C.y };
+          var lenCA = Math.hypot(CA.x, CA.y), lenCB = Math.hypot(CB.x, CB.y);
+          if (lenCA < msAvg * 3 || lenCB < msAvg * 3) continue;
+          var dot = (CA.x * CB.x + CA.y * CB.y) / (lenCA * lenCB);
+          var angleScore = 1 - Math.abs(dot); // closer to 0 dot product (90 deg) is better
+          var ratioScore = 1 - Math.abs(lenCA - lenCB) / Math.max(lenCA, lenCB);
+          var score = angleScore * 2 + ratioScore;
+          if (score > bestScore) {
+            bestScore = score;
+            // Determine which of A/B is "top-right" vs "bottom-left" via cross product sign (image y-down coords).
+            var cross = CA.x * CB.y - CA.y * CB.x;
+            var topLeft = C, right, bottom;
+            if (cross > 0) { right = A; bottom = B; } else { right = B; bottom = A; }
+            best = { topLeft: topLeft, topRight: right, bottomLeft: bottom, moduleSize: msAvg };
+          }
+        }
+      }
+    }
+    return bestScore > 0.5 ? best : null;
+  }
+
+  // ---------- Homography (perspective transform) ----------
+  // Solve for the 3x3 projective matrix mapping unit square corners (0,0)(1,0)(1,1)(0,1) -> given quad, per jsQR/zxing technique.
+  function squareToQuad(p0, p1, p2, p3) {
+    var dx3 = p0.x - p1.x + p2.x - p3.x;
+    var dy3 = p0.y - p1.y + p2.y - p3.y;
+    if (dx3 === 0 && dy3 === 0) {
+      return [p1.x - p0.x, p2.x - p1.x, p0.x, p1.y - p0.y, p2.y - p1.y, p0.y, 0, 0, 1];
+    }
+    var dx1 = p1.x - p2.x, dx2 = p3.x - p2.x;
+    var dy1 = p1.y - p2.y, dy2 = p3.y - p2.y;
+    var denom = dx1 * dy2 - dx2 * dy1;
+    var g = (dx3 * dy2 - dx2 * dy3) / denom;
+    var h = (dx1 * dy3 - dx3 * dy1) / denom;
+    var a = p1.x - p0.x + g * p1.x;
+    var b = p3.x - p0.x + h * p3.x;
+    var c = p0.x;
+    var d = p1.y - p0.y + g * p1.y;
+    var e = p3.y - p0.y + h * p3.y;
+    var f = p0.y;
+    return [a, b, c, d, e, f, g, h, 1];
+  }
+
+  function multiplyMat(m1, m2) {
+    var out = new Array(9);
+    for (var r = 0; r < 3; r++) {
+      for (var c = 0; c < 3; c++) {
+        out[r * 3 + c] = m1[r * 3 + 0] * m2[0 * 3 + c] + m1[r * 3 + 1] * m2[1 * 3 + c] + m1[r * 3 + 2] * m2[2 * 3 + c];
+      }
+    }
+    return out;
+  }
+  function invertMat(m) {
+    var a = m[0], b = m[1], c = m[2], d = m[3], e = m[4], f = m[5], g = m[6], h = m[7], i = m[8];
+    var A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
+    var D = -(b * i - c * h), E = a * i - c * g, F = -(a * h - b * g);
+    var G = b * f - c * e, H = -(a * f - c * d), I = a * e - b * d;
+    var det = a * A + b * B + c * C;
+    return [A / det, D / det, G / det, B / det, E / det, H / det, C / det, F / det, I / det];
+  }
+  function applyMat(m, x, y) {
+    var X = m[0] * x + m[1] * y + m[2];
+    var Y = m[3] * x + m[4] * y + m[5];
+    var W = m[6] * x + m[7] * y + m[8];
+    return { x: X / W, y: Y / W };
+  }
+
+  // Build transform from "grid unit space" (module coords, 0..size) to pixel space, given 3 finder centers
+  // (each at module-center offset 3.5) and an estimated/refined bottom-right point (module coords size-3.5,size-3.5).
+  function buildGridToImage(size, topLeftPx, topRightPx, bottomLeftPx, bottomRightPx) {
+    var sq = squareToQuad(
+      { x: 3.5, y: 3.5 },
+      { x: size - 3.5, y: 3.5 },
+      { x: size - 3.5, y: size - 3.5 },
+      { x: 3.5, y: size - 3.5 }
+    );
+    var quadToImg = squareToQuad(
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }
+    );
+    // We want: moduleSpace -> unitSquare (inverse of sq scaled) -> imageQuad(actual finder px positions)
+    // Simpler: directly compute squareToQuad from unit square to actual pixel quad, and moduleSpace->unitSquare via inverse of "sq" (which maps unit->moduleSpaceQuad urgh).
+    // Use direct approach: unit square (0,0)(1,0)(1,1)(0,1) -> pixel quad (topLeftPx,topRightPx,bottomRightPx,bottomLeftPx)
+    var unitToPixel = squareToQuad(topLeftPx, topRightPx, bottomRightPx, bottomLeftPx);
+    // module space -> unit square: module (3.5,3.5)->(0,0), (size-3.5,3.5)->(1,0), (size-3.5,size-3.5)->(1,1), (3.5,size-3.5)->(0,1)
+    var moduleToUnit = invertMat(squareToQuad(
+      { x: 3.5, y: 3.5 }, { x: size - 3.5, y: 3.5 }, { x: size - 3.5, y: size - 3.5 }, { x: 3.5, y: size - 3.5 }
+    ));
+    return multiplyMat(unitToPixel, moduleToUnit);
+  }
+
+  function sampleBit(bin, w, h, x, y) {
+    var xi = Math.round(x), yi = Math.round(y);
+    if (xi < 0 || xi >= w || yi < 0 || yi >= h) return 0;
+    return bin[yi * w + xi];
+  }
+
+  function estimateVersionFromModuleSize(distTLtoTR, moduleSize) {
+    var sizeEstimate = Math.round(distTLtoTR / moduleSize) + 7; // TL center to TR center spans (size-7) modules
+    var v = Math.round((sizeEstimate - 17) / 4);
+    return Math.max(1, Math.min(40, v));
+  }
+
+  // Score how well a candidate center matches the known 5x5 alignment-pattern bullseye
+  // (dark ring, white ring, single dark center module), sampled along the local module axes
+  // (dirX, dirY = per-module pixel vectors), so this works under rotation/mild perspective too.
+  var ALIGNMENT_TRUTH = [
+    [1, 1, 1, 1, 1],
+    [1, 0, 0, 0, 1],
+    [1, 0, 1, 0, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 1, 1, 1]
+  ];
+  function sampleAlignmentScore(bin, w, h, cx, cy, dirX, dirY) {
+    var match = 0, total = 0;
+    for (var ry = -2; ry <= 2; ry++) {
+      for (var rx = -2; rx <= 2; rx++) {
+        var px = cx + rx * dirX.x + ry * dirY.x;
+        var py = cy + rx * dirX.y + ry * dirY.y;
+        var xi = Math.round(px), yi = Math.round(py);
+        if (xi < 0 || xi >= w || yi < 0 || yi >= h) continue;
+        total++;
+        if (bin[yi * w + xi] === ALIGNMENT_TRUTH[ry + 2][rx + 2]) match++;
+      }
+    }
+    return total > 0 ? match / total : 0;
+  }
+
+  // Try to find the alignment pattern near an estimated location, to refine the bottom-right corner.
+  // Uses a direct 2D correlation search against the known bullseye shape rather than a 1D run-length
+  // ratio scan: the ratio scan is fragile here because the alignment pattern sits inside dense QR data,
+  // and its border runs frequently merge with adjacent same-color data modules, corrupting the
+  // apparent run lengths (this was the root cause of a real, previously-undiagnosed decode failure).
+  function refineAlignment(bin, w, h, estX, estY, moduleSize, dirX, dirY) {
+    // The initial estimate comes from a parallelogram (affine) assumption, which is only exact
+    // for a fronto-parallel/rotated shot; under real perspective it can be off by many pixels
+    // (growing with how tilted the shot is), so the search window needs to be considerably
+    // wider than the finder pattern's own tolerance. A wide radius is safe here because the
+    // match is scored against the full 5x5 bullseye shape (see sampleAlignmentScore), not a
+    // cheap 1D ratio, so false positives at the 0.82 threshold are rare even over a big window.
+    var searchR = Math.max(4, moduleSize * 7);
+    var step = Math.max(0.5, moduleSize / 8);
+    var best = null, bestScore = 0;
+    for (var dy = -searchR; dy <= searchR; dy += step) {
+      for (var dx = -searchR; dx <= searchR; dx += step) {
+        var cx = estX + dx, cy = estY + dy;
+        var score = sampleAlignmentScore(bin, w, h, cx, cy, dirX, dirY);
+        if (score > bestScore) { bestScore = score; best = { x: cx, y: cy }; }
+      }
+    }
+    // Require a strong match (>=21/25 modules correct) — otherwise fall back to the plain
+    // parallelogram estimate rather than risk locking onto a false positive.
+    if (!best || bestScore < 0.82) return null;
+    return best;
+  }
+
+  // Sample a full module grid for a given (already-located) finder triple, assuming a specific
+  // QR version/size. Split out from locateAndSample so callers can retry neighboring versions:
+  // the moduleSize measured from run-length scans is systematically biased under rotation (the
+  // scan cuts the finder pattern at an angle, inflating the apparent module size), which can push
+  // estimateVersionFromModuleSize's result off by one — most versions differ from their neighbors
+  // by only 4 modules, well inside that bias. Rather than trying to perfectly correct the bias,
+  // the caller (see decodeQr below) tries the estimate and its immediate neighbors and keeps
+  // whichever version actually decodes.
+  function sampleForVersion(bin, w, h, triple, version, opts) {
+    opts = opts || {};
+    var size = 17 + 4 * version;
+
+    var bottomRightEst = {
+      x: triple.topRight.x + triple.bottomLeft.x - triple.topLeft.x,
+      y: triple.topRight.y + triple.bottomLeft.y - triple.topLeft.y
+    };
+
+    // Try alignment-pattern refinement (version >= 2 always has at least one alignment pattern at bottom-right area).
+    if (version >= 2 && !opts.noRefine) {
+      // Per-module pixel vectors along each grid axis, derived from the three finder centers —
+      // used both to place the search estimate and (inside refineAlignment) to sample candidate
+      // bullseye positions along the true local module grid, so this stays correct under rotation.
+      var dirX = { x: (triple.topRight.x - triple.topLeft.x) / (size - 7), y: (triple.topRight.y - triple.topLeft.y) / (size - 7) };
+      var dirY = { x: (triple.bottomLeft.x - triple.topLeft.x) / (size - 7), y: (triple.bottomLeft.y - triple.topLeft.y) / (size - 7) };
+      // The bottom-right-most alignment pattern sits at module coords (size-6.5, size-6.5), which is
+      // 3 modules inset from the (size-3.5, size-3.5) corner point used for bottomRightEst above. Search
+      // around THAT location (via the same affine/parallelogram estimate), not around the corner itself.
+      var tAlign = (size - 10) / (size - 7);
+      var alignEstX = triple.topLeft.x + tAlign * (triple.topRight.x - triple.topLeft.x) + tAlign * (triple.bottomLeft.x - triple.topLeft.x);
+      var alignEstY = triple.topLeft.y + tAlign * (triple.topRight.y - triple.topLeft.y) + tAlign * (triple.bottomLeft.y - triple.topLeft.y);
+      var refined = refineAlignment(bin, w, h, alignEstX, alignEstY, triple.moduleSize, dirX, dirY);
+      if (refined) {
+        // alignment center is at module coords (size-6.5, size-6.5); adjust bottomRightEst (size-3.5,size-3.5) via offset
+        var offsetModules = 3.0; // (size-3.5) - (size-6.5) = 3 modules
+        bottomRightEst = {
+          x: refined.x + offsetModules * dirX.x + offsetModules * dirY.x,
+          y: refined.y + offsetModules * dirX.y + offsetModules * dirY.y
+        };
+      }
+    }
+
+    var gridToImage = buildGridToImage(size,
+      { x: triple.topLeft.x, y: triple.topLeft.y },
+      { x: triple.topRight.x, y: triple.topRight.y },
+      { x: triple.bottomLeft.x, y: triple.bottomLeft.y },
+      bottomRightEst
+    );
+
+    var modules = [];
+    for (var r = 0; r < size; r++) {
+      var rowArr = new Uint8Array(size);
+      for (var c = 0; c < size; c++) {
+        var p = applyMat(gridToImage, c + 0.5, r + 0.5);
+        rowArr[c] = sampleBit(bin, w, h, p.x, p.y);
+      }
+      modules.push(rowArr);
+    }
+    return { size: size, modules: modules, version: version, triple: triple };
+  }
+
+  function locateAndSample(rgba, w, h, opts) {
+    opts = opts || {};
+    var gray = toGray(rgba, w, h);
+    var bin = adaptiveBinarize(gray, w, h);
+    var candidates = findFinderCandidates(bin, w, h);
+    var triple = pickTriple(candidates);
+    if (!triple) return null;
+
+    var distTLTR = Math.hypot(triple.topRight.x - triple.topLeft.x, triple.topRight.y - triple.topLeft.y);
+    var version = opts.version || estimateVersionFromModuleSize(distTLTR, triple.moduleSize);
+    var result = sampleForVersion(bin, w, h, triple, version, opts);
+    result.bin = bin;
+    result.triple = triple;
+    return result;
+  }
+
+  // Locate + sample + decode in one call, retrying neighboring versions (and, failing that,
+  // toggling alignment refinement) when the first attempt doesn't produce a decodable matrix.
+  // This is the entry point real callers (tests and the browser receiver) should use.
+  function decodeQr(rgba, w, h, QR) {
+    var gray = toGray(rgba, w, h);
+    var bin = adaptiveBinarize(gray, w, h);
+    var candidates = findFinderCandidates(bin, w, h);
+    var triple = pickTriple(candidates);
+    if (!triple) return { ok: false, reason: 'NOT_FOUND' };
+
+    var distTLTR = Math.hypot(triple.topRight.x - triple.topLeft.x, triple.topRight.y - triple.topLeft.y);
+    var baseVersion = estimateVersionFromModuleSize(distTLTR, triple.moduleSize);
+    var tried = [];
+    var order = [0, -1, 1, -2, 2];
+    var lastErr = null;
+    for (var oi = 0; oi < order.length; oi++) {
+      var version = baseVersion + order[oi];
+      if (version < 1 || version > 40 || tried.indexOf(version) !== -1) continue;
+      tried.push(version);
+      for (var refinePass = 0; refinePass < 2; refinePass++) {
+        var noRefine = refinePass === 1; // second pass: skip alignment refinement (plain parallelogram)
+        try {
+          var sampled = sampleForVersion(bin, w, h, triple, version, { noRefine: noRefine });
+          var res = QR.decodeMatrix(sampled.modules, sampled.size);
+          return { ok: true, bytes: res.bytes, version: version, triple: triple, noRefine: noRefine };
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+    }
+    return { ok: false, reason: 'DECODE_ERROR', error: lastErr, version: baseVersion };
+  }
+
+  var QRImage = {
+    toGray: toGray,
+    adaptiveBinarize: adaptiveBinarize,
+    findFinderCandidates: findFinderCandidates,
+    pickTriple: pickTriple,
+    locateAndSample: locateAndSample,
+    sampleForVersion: sampleForVersion,
+    decodeQr: decodeQr,
+    buildGridToImage: buildGridToImage,
+    applyMat: applyMat,
+    scanLineForPattern: scanLineForPattern,
+    matchesRatio: matchesRatio
+  };
+  if (typeof module !== 'undefined' && module.exports) module.exports = QRImage;
+  else root.QRImage = QRImage;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+  var video = $('video'), canvas = $('canvas'), placeholder = $('placeholder'), frameOverlay = $('frameOverlay');
+  var startBtn = $('startBtn'), stopBtn = $('stopBtn'), resetBtn = $('resetBtn'), liveDot = $('liveDot');
+  var cameraError = $('cameraError');
+  var telemetryPanel = $('telemetryPanel'), tSession = $('tSession'), tBlocks = $('tBlocks'), tBar = $('tBar');
+  var tFrames = $('tFrames'), tFps = $('tFps'), logBox = $('logBox');
+  var resultPanel = $('resultPanel'), fileIcon = $('fileIcon'), fileName = $('fileName'), fileSub = $('fileSub');
+  var previewSlot = $('previewSlot'), saveBtn = $('saveBtn'), saveHelp = $('saveHelp'), resultBadge = $('resultBadge');
+  var ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  var stream = null, scanning = false, scanBusy = false, scanTimer = null;
+  var session = null; // {sessionId,k,blockLen,totalLen,payloadFnv,decoder,framesSeen,startedAt,done}
+  var totalFramesScanned = 0, decodedFrameEvents = [];
+  var lastResult = null; // {name,type,bytes}
+
+  function log(msg) {
+    var line = document.createElement('div');
+    line.textContent = msg;
+    logBox.appendChild(line);
+    while (logBox.childNodes.length > 40) logBox.removeChild(logBox.firstChild);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  // ---------------- Camera + scan loop ----------------
+
+  function showCameraError(html) {
+    cameraError.innerHTML = html;
+    cameraError.style.display = 'block';
+  }
+  function hideCameraError() {
+    cameraError.style.display = 'none';
+    cameraError.innerHTML = '';
+  }
+
+  function describeCameraError(e) {
+    var name = (e && e.name) || '';
+    if (!window.isSecureContext) {
+      return '<b>Страница открыта не по HTTPS.</b> Камера работает только на защищённом соединении — открой ссылку заново через https://claude.ai.';
+    }
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      return '<b>Доступ к камере запрещён.</b> В Safari: нажми «aA» в адресной строке → «Настройки сайта» (Website Settings) → Камера → «Разрешить», затем перезагрузи страницу. Если пункта нет — Настройки iOS → Safari → Камера → Спрашивать/Разрешить.';
+    }
+    if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      return '<b>Камера не найдена.</b> Похоже, у устройства нет доступной камеры или её перехватило другое приложение.';
+    }
+    if (name === 'NotReadableError' || name === 'TrackStartError') {
+      return '<b>Камера занята другим приложением.</b> Закрой другие вкладки/приложения, использующие камеру, и попробуй снова.';
+    }
+    if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
+      return '<b>Не удалось подобрать параметры камеры.</b> Пробую упрощённый запрос…';
+    }
+    return '<b>Не удалось включить камеру.</b> ' + (name || (e && e.message) || 'Неизвестная ошибка') +
+      '. Если это открыто внутри приложения Claude — попробуй открыть ссылку именно в Safari (скопировать ссылку → вставить в адресную строку Safari).';
+  }
+
+  function requestStream(constraints) {
+    return navigator.mediaDevices.getUserMedia(constraints);
+  }
+
+  function startCamera() {
+    hideCameraError();
+    if (!window.isSecureContext) {
+      showCameraError(describeCameraError({}));
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showCameraError('<b>Этот браузер не поддерживает доступ к камере со страницы.</b> Открой ссылку в Safari (не во встроенном окне другого приложения).');
+      return;
+    }
+    startBtn.disabled = true;
+    requestStream({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } }
+    }).catch(function (e) {
+      if (e && (e.name === 'OverconstrainedError' || e.name === 'ConstraintNotSatisfiedError')) {
+        showCameraError(describeCameraError(e));
+        return requestStream({ audio: false, video: true });
+      }
+      throw e;
+    }).then(function (s) {
+      stream = s;
+      video.srcObject = stream;
+      return video.play();
+    }).then(function () {
+      hideCameraError();
+      scanning = true;
+      placeholder.style.display = 'none';
+      startBtn.style.display = 'none';
+      stopBtn.style.display = '';
+      telemetryPanel.style.display = '';
+      liveDot.className = 'dot live';
+      log('Камера включена, поиск QR-кода…');
+      scheduleScan();
+    }).catch(function (e) {
+      showCameraError(describeCameraError(e || {}));
+    }).finally(function () {
+      startBtn.disabled = false;
+    });
+  }
+
+  function stopCamera() {
+    scanning = false;
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    video.srcObject = null;
+    startBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    placeholder.style.display = '';
+    liveDot.className = 'dot';
+  }
+
+  function scheduleScan() {
+    if (!scanning) return;
+    scanTimer = setTimeout(scanOnce, 90);
+  }
+
+  function scanOnce() {
+    if (!scanning) return;
+    if (scanBusy || video.readyState < 2 || !video.videoWidth) { scheduleScan(); return; }
+    scanBusy = true;
+    try {
+      var vw = video.videoWidth, vh = video.videoHeight;
+      var scale = Math.min(1, 1100 / Math.max(vw, vh));
+      var cw = Math.max(1, Math.round(vw * scale)), ch = Math.max(1, Math.round(vh * scale));
+      canvas.width = cw; canvas.height = ch;
+      ctx.drawImage(video, 0, 0, cw, ch);
+      var imgData = ctx.getImageData(0, 0, cw, ch);
+      var res = QRImage.decodeQr(imgData.data, cw, ch, QR);
+      totalFramesScanned++;
+      var now = Date.now();
+      decodedFrameEvents.push(now);
+      while (decodedFrameEvents.length && now - decodedFrameEvents[0] > 3000) decodedFrameEvents.shift();
+      tFps.textContent = (decodedFrameEvents.length / 3).toFixed(1) + ' fps';
+      tFrames.textContent = String(totalFramesScanned);
+      if (res.ok) {
+        frameOverlay.classList.add('hit');
+        handleDecodedBytes(res.bytes);
+      } else {
+        frameOverlay.classList.remove('hit');
+      }
+    } catch (e) {
+      frameOverlay.classList.remove('hit');
+      // Never let a single bad frame kill the scan loop.
+    }
+    scanBusy = false;
+    scheduleScan();
+  }
+
+  // ---------------- Protocol / fountain-code session handling ----------------
+
+  function handleDecodedBytes(bytes) {
+    var frame = Protocol.parseFrame(bytes);
+    if (!frame) return; // decoded a QR that isn't a Decimen frame; ignore
+    if (!session || session.sessionId !== frame.sessionId || session.k !== frame.k || session.blockLen !== frame.blockLen) {
+      session = {
+        sessionId: frame.sessionId,
+        k: frame.k,
+        blockLen: frame.blockLen,
+        totalLen: frame.totalLen,
+        payloadFnv: frame.payloadFnv,
+        decoder: new FountainDecoderModule.FountainDecoder(frame.sessionId, frame.k, frame.blockLen),
+        framesSeen: 0,
+        startedAt: Date.now(),
+        done: false
+      };
+      resultPanel.classList.remove('show');
+      tSession.textContent = '#' + frame.sessionId;
+      log('Новая сессия #' + frame.sessionId + ' · блоков K=' + frame.k + ' · блок=' + frame.blockLen + ' Б');
+    }
+    if (session.done) return;
+    session.framesSeen++;
+    session.decoder.addFrame(frame.seq, frame.block);
+    updateProgress();
+    if (session.decoder.isComplete()) {
+      session.done = true;
+      finishSession(session);
+    }
+  }
+
+  function updateProgress() {
+    if (!session) return;
+    var known = session.decoder.knownCount, k = session.decoder.k;
+    tBlocks.textContent = known + ' / ' + k;
+    tBar.style.width = Math.round((known / k) * 100) + '%';
+  }
+
+  function gunzip(bytes) {
+    var ds = new DecompressionStream('gzip');
+    var stream = new Blob([bytes]).stream().pipeThrough(ds);
+    return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+  }
+
+  function bytesEqual(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  function finishSession(sess) {
+    var container = sess.decoder.assemble(sess.totalLen);
+    var gotFnv = Protocol.fnv1a(container);
+    if ((gotFnv | 0) !== (sess.payloadFnv | 0)) {
+      log('⚠ Контрольная сумма всего файла не совпала — ждём кадры повторно (это не должно происходить при K корректных блоках).');
+      sess.done = false;
+      return;
+    }
+    var meta = Protocol.parseContainer(container);
+    if (!meta) {
+      log('⚠ Не удалось разобрать контейнер файла (повреждён формат).');
+      sess.done = false;
+      return;
+    }
+    log('Все ' + sess.k + ' блоков собраны — распаковка «' + meta.name + '»…');
+    var afterTransmitted = meta.useGzip ? gunzip(meta.transmitted) : Promise.resolve(meta.transmitted);
+    afterTransmitted.then(function (original) {
+      return crypto.subtle.digest('SHA-256', original).then(function (hashBuf) {
+        var gotHash = new Uint8Array(hashBuf);
+        var hashOk = bytesEqual(gotHash, meta.sha256);
+        showResult(meta, original, hashOk);
+      });
+    }).catch(function (e) {
+      log('⚠ Ошибка распаковки/проверки: ' + e.message);
+      sess.done = false;
+    });
+  }
+
+  // ---------------- Result UI ----------------
+
+  function iconFor(type, name) {
+    if (/^image\//.test(type)) return '🖼️';
+    if (/^video\//.test(type)) return '🎞️';
+    if (/^audio\//.test(type)) return '🎵';
+    if (/^text\//.test(type) || /\.(txt|md|json|csv|log)$/i.test(name)) return '📝';
+    if (/pdf/.test(type)) return '📕';
+    if (/zip|compressed|archive/.test(type)) return '🗜️';
+    return '📄';
+  }
+
+  function showResult(meta, original, hashOk) {
+    lastResult = { name: meta.name, type: meta.type, bytes: original };
+    resultPanel.classList.add('show');
+    resultBadge.textContent = hashOk ? 'Готово, контрольная сумма верна' : 'Готово (внимание: SHA-256 не совпал)';
+    resultBadge.className = 'badge ' + (hashOk ? 'ok' : 'warn');
+    fileIcon.textContent = iconFor(meta.type, meta.name);
+    fileName.textContent = meta.name;
+    fileSub.textContent = fmtBytes(original.length) + ' · ' + meta.type + (meta.useGzip ? ' · gzip' : '');
+    previewSlot.innerHTML = '';
+    if (/^image\//.test(meta.type)) {
+      var blobUrl = URL.createObjectURL(new Blob([original], { type: meta.type }));
+      var img = document.createElement('img');
+      img.className = 'preview-img';
+      img.src = blobUrl;
+      previewSlot.appendChild(img);
+    } else if (/^text\//.test(meta.type) || /json/.test(meta.type)) {
+      try {
+        var text = new TextDecoder('utf-8').decode(original.slice(0, 4000));
+        var pre = document.createElement('div');
+        pre.className = 'preview-text';
+        pre.textContent = text + (original.length > 4000 ? '\n…' : '');
+        previewSlot.appendChild(pre);
+      } catch (e) { /* not valid utf-8, skip preview */ }
+    }
+    log('✔ Файл готов: ' + meta.name + ' (' + fmtBytes(original.length) + ')' + (hashOk ? '' : ' — ПРОВЕРКА SHA-256 НЕ ПРОШЛА'));
+    saveHelp.textContent = '';
+  }
+
+  // ---------------- Minimal ZIP (stored, no compression) for arbitrary file types ----------------
+
+  var CRC_TABLE = (function () {
+    var table = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    return table;
+  })();
+  function crc32(bytes) {
+    var c = 0xffffffff;
+    for (var i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  }
+  function dosDateTime() {
+    var d = new Date();
+    var time = ((d.getHours() & 0x1f) << 11) | ((d.getMinutes() & 0x3f) << 5) | ((d.getSeconds() >> 1) & 0x1f);
+    var date = (((d.getFullYear() - 1980) & 0x7f) << 9) | (((d.getMonth() + 1) & 0xf) << 5) | (d.getDate() & 0x1f);
+    return { time: time, date: date };
+  }
+  function zipStore(entryName, bytes) {
+    var nameBytes = new TextEncoder().encode(entryName);
+    var crc = crc32(bytes);
+    var dt = dosDateTime();
+    var localHeader = new Uint8Array(30 + nameBytes.length);
+    var dv = new DataView(localHeader.buffer);
+    dv.setUint32(0, 0x04034b50, true);
+    dv.setUint16(4, 20, true); // version needed
+    dv.setUint16(6, 0, true); // flags
+    dv.setUint16(8, 0, true); // method = stored
+    dv.setUint16(10, dt.time, true);
+    dv.setUint16(12, dt.date, true);
+    dv.setUint32(14, crc, true);
+    dv.setUint32(18, bytes.length, true);
+    dv.setUint32(22, bytes.length, true);
+    dv.setUint16(26, nameBytes.length, true);
+    dv.setUint16(28, 0, true); // extra len
+    localHeader.set(nameBytes, 30);
+
+    var centralHeader = new Uint8Array(46 + nameBytes.length);
+    var cdv = new DataView(centralHeader.buffer);
+    cdv.setUint32(0, 0x02014b50, true);
+    cdv.setUint16(4, 20, true);
+    cdv.setUint16(6, 20, true);
+    cdv.setUint16(8, 0, true);
+    cdv.setUint16(10, 0, true);
+    cdv.setUint16(12, dt.time, true);
+    cdv.setUint16(14, dt.date, true);
+    cdv.setUint32(16, crc, true);
+    cdv.setUint32(20, bytes.length, true);
+    cdv.setUint32(24, bytes.length, true);
+    cdv.setUint16(28, nameBytes.length, true);
+    cdv.setUint16(30, 0, true);
+    cdv.setUint16(32, 0, true);
+    cdv.setUint16(34, 0, true);
+    cdv.setUint16(36, 0, true);
+    cdv.setUint32(38, 0, true);
+    cdv.setUint32(42, 0, true); // local header offset = 0
+    centralHeader.set(nameBytes, 46);
+
+    var eocd = new Uint8Array(22);
+    var edv = new DataView(eocd.buffer);
+    edv.setUint32(0, 0x06054b50, true);
+    edv.setUint16(4, 0, true);
+    edv.setUint16(6, 0, true);
+    edv.setUint16(8, 1, true);
+    edv.setUint16(10, 1, true);
+    edv.setUint32(12, centralHeader.length, true);
+    edv.setUint32(16, localHeader.length + bytes.length, true);
+    edv.setUint16(20, 0, true);
+
+    var total = new Uint8Array(localHeader.length + bytes.length + centralHeader.length + eocd.length);
+    var off = 0;
+    total.set(localHeader, off); off += localHeader.length;
+    total.set(bytes, off); off += bytes.length;
+    total.set(centralHeader, off); off += centralHeader.length;
+    total.set(eocd, off);
+    return total;
+  }
+
+  var ALLOWED_EXT = ['gif', 'png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'txt', 'json', 'md',
+    'docx', 'pptx', 'epub', 'csv', 'ttf', 'html', 'svg', 'pdf', 'xlsx', 'zip'];
+
+  function extOf(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || '');
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  // ---------------- Save via the downloads capability ----------------
+
+  saveBtn.addEventListener('click', function () {
+    if (!lastResult) return;
+    saveBtn.disabled = true;
+    saveHelp.textContent = '';
+    (async function () {
+      var downloads = (window.claude && typeof window.claude.use === 'function')
+        ? await window.claude.use('downloads') : null;
+      if (!downloads) {
+        saveHelp.textContent = 'Сохранение файлов недоступно в этом окне просмотра.';
+        saveBtn.disabled = false;
+        return;
+      }
+      var name = lastResult.name || 'file';
+      var ext = extOf(name);
+      var filename = name, data = lastResult.bytes;
+      if (ALLOWED_EXT.indexOf(ext) === -1) {
+        // Wrap in a stored (uncompressed) zip so the exact original bytes and filename survive.
+        data = zipStore(name, lastResult.bytes);
+        filename = (name.replace(/\.[^.]*$/, '') || 'file') + '.zip';
+        saveHelp.textContent = 'Формат «.' + (ext || '?') + '» не поддерживается напрямую — файл упакован в .zip с исходным именем внутри.';
+      }
+      try {
+        var res = await downloads.save({ filename: filename, data: data });
+        log('💾 Сохранено: ' + filename + ' (' + res.status + ')');
+      } catch (e) {
+        if (e && e.code === 'declined') {
+          log('Сохранение отменено пользователем.');
+        } else {
+          saveHelp.textContent = 'Не удалось сохранить: ' + (e && e.message ? e.message : e);
+          log('⚠ Ошибка сохранения: ' + (e && e.code));
+        }
+      }
+      saveBtn.disabled = false;
+    })();
+  });
+
+  // ---------------- Wiring ----------------
+
+  startBtn.addEventListener('click', startCamera);
+  stopBtn.addEventListener('click', stopCamera);
+  resetBtn.addEventListener('click', function () {
+    hideCameraError();
+    session = null;
+    totalFramesScanned = 0;
+    decodedFrameEvents = [];
+    lastResult = null;
+    resultPanel.classList.remove('show');
+    tSession.textContent = '—';
+    tBlocks.textContent = '0 / 0';
+    tBar.style.width = '0%';
+    tFrames.textContent = '0';
+    logBox.innerHTML = '';
+    log('Сброшено. Готово к новому файлу.');
+  });
+})();
+
+</script>
