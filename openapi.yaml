@@ -1,0 +1,226 @@
+openapi: "3.0.3"
+info:
+  title: API сервиса загрузки документов в ЕСМ модуля VUX (gmap2-vux-ecm)
+  description: >
+    REST API сервиса gmap2-vux-ecm системы GMAP2. Сервис сохраняет документы в ЕСМ
+    через TFS: эндпоинт /api/v1/upload/by-s3-path принимает ссылку на объект,
+    уже загруженный в S3, регистрирует запрос в очереди ЕСМ (v_vux_ecm_queue,
+    процедура fn_ecm_request_create с subsystem = xbrl-csv), скачивает файл из S3
+    для расчёта MD5, определения MIME и (при включённой интеграции) подписи
+    через АС ОКЭЙ, после чего отправляет XML-запрос UploadFileEcmRq в Kafka-топик TFS.
+    Контракт собран по UploadController, UploadByS3PathRequestDto,
+    DocumentTypeEnum и обработчику ошибок GlobalExceptionHandler.
+    Ошибки возвращаются в формате RFC 9457 (application/problem+json).
+  version: "1.0.0"
+  contact:
+    name: Дельта Sber
+    url: https://confluence.delta.sbrf.ru
+servers:
+  - url: http://gmap2-vux-ecm-svc:8080
+    description: Внутрикластерный вызов (IFT/PSI)
+  - url: http://localhost:8080
+    description: Локальная разработка
+tags:
+  - name: Upload
+    description: Загрузка документов в ЕСМ
+
+paths:
+  /api/v1/upload/by-s3-path:
+    post:
+      operationId: uploadByS3Path
+      summary: Загрузка документа в ЕСМ по ссылке на объект в S3
+      description: >
+        Регистрирует запрос в очереди ЕСМ (fn_ecm_request_create: p_request_id = rqUid,
+        p_subsystem = xbrl-csv, p_subsystem_id = sliceId), скачивает файл из S3 по s3Path
+        (бакет берётся из конфигурации сервиса), формирует TFS-запрос и отправляет его
+        в Kafka. Повторная выгрузка файла в S3 не выполняется: TFS читает объект
+        по имени из s3Path. Ответ 200 означает, что запрос принят и передан в Kafka;
+        итог сохранения в ЕСМ приходит асинхронно квитанцией и отражается в
+        v_vux_ecm_queue (fn_ecm_request_set_ecm_id либо fn_ecm_request_set_error).
+        При ошибке после регистрации запроса вызывается fn_ecm_request_set_error
+        с текстом ошибки, и клиент получает HTTP 500.
+      tags:
+        - Upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadByS3PathRequest"
+            example:
+              s3Path: "xbrl-csv/report_20261029.zip"
+              filename: "report_20261029.zip"
+              documentType: "XBRL_CSV_RP_DOCUMENT"
+              sliceId: "f67cae50-e001-4b5f-a609-9f056063cc79"
+      responses:
+        "200":
+          description: >
+            Запрос принят и отправлен в TFS; в теле — идентификатор запроса в ЕСМ (rqUid),
+            он же ecmRequestId записи очереди v_vux_ecm_queue. Тело — JSON-строка без обёртки.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RqUid"
+              example: "123e4567-e89b-12d3-a456-426614174000"
+        "400":
+          description: >
+            Некорректный запрос: невалидный JSON или тело отсутствует (detail
+            «Malformed request body»), пустое или отсутствующее обязательное поле
+            (detail «Request validation failed»), неизвестный documentType
+            (detail «Unknown documentType: '<значение>'»). Запрос в очереди ЕСМ
+            при этих ошибках не регистрируется.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+              examples:
+                validation:
+                  summary: Пустое обязательное поле
+                  value:
+                    type: "about:blank"
+                    title: "400 BAD_REQUEST"
+                    status: 400
+                    detail: "Request validation failed"
+                    instance: "/api/v1/upload/by-s3-path"
+                unknownDocumentType:
+                  summary: Неизвестный тип документа
+                  value:
+                    type: "about:blank"
+                    title: "400 BAD_REQUEST"
+                    status: 400
+                    detail: "Unknown documentType: 'UNKNOWN_TYPE'"
+                    instance: "/api/v1/upload/by-s3-path"
+                malformedBody:
+                  summary: Невалидный JSON
+                  value:
+                    type: "about:blank"
+                    title: "400 BAD_REQUEST"
+                    status: 400
+                    detail: "Malformed request body"
+                    instance: "/api/v1/upload/by-s3-path"
+        "500":
+          description: >
+            Внутренняя ошибка. Для ошибок ЕСМ/S3 (EcmException) detail содержит текст
+            ошибки, например при недоступном объекте в S3 («Error downloading file ...»);
+            для прочих ошибок — «Internal server error» (выключенная загрузка через TFS,
+            ошибка БД при регистрации запроса в очереди, ошибка подписи, ошибка Kafka).
+            Через общий обработчик в 500 также превращаются ошибки, которые Spring
+            по умолчанию отдал бы как 404/405/415 (неверный путь, метод или Content-Type).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+              examples:
+                s3DownloadError:
+                  summary: Объект не найден в S3
+                  value:
+                    type: "about:blank"
+                    title: "500 INTERNAL_SERVER_ERROR"
+                    status: 500
+                    detail: "Error downloading file 'xbrl-csv/report_20261029.zip' from S3 bucket 'vux-bucket'. Error: 'The specified key does not exist.'"
+                    instance: "/api/v1/upload/by-s3-path"
+                internalError:
+                  summary: Прочая внутренняя ошибка
+                  value:
+                    type: "about:blank"
+                    title: "500 INTERNAL_SERVER_ERROR"
+                    status: 500
+                    detail: "Internal server error"
+                    instance: "/api/v1/upload/by-s3-path"
+
+components:
+  schemas:
+
+    UploadByS3PathRequest:
+      type: object
+      description: Тело запроса на загрузку документа по ссылке на объект в S3 (UploadByS3PathRequestDto)
+      required:
+        - s3Path
+        - filename
+        - documentType
+        - sliceId
+      properties:
+        s3Path:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: >
+            Ключ объекта внутри бакета S3 (папка и имя файла) без имени бакета;
+            бакет определяется конфигурацией сервиса
+          example: "xbrl-csv/report_20261029.zip"
+        filename:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: Имя документа в ЕСМ
+          example: "report_20261029.zip"
+        documentType:
+          $ref: "#/components/schemas/DocumentType"
+        sliceId:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          description: >
+            Идентификатор среза отчётности; записывается в очередь ЕСМ
+            как subsystem_id (p_subsystem_id процедуры fn_ecm_request_create)
+          example: "f67cae50-e001-4b5f-a609-9f056063cc79"
+
+    DocumentType:
+      type: string
+      description: >
+        Тип документа — имя константы DocumentTypeEnum (регистр важен). Определяет
+        класс документа в ЕСМ: XBRL_VUX_RFVP_DOCUMENT — XBRL_VUX_RFVP_Document
+        (протокол проверки отчётной формы); XBRL_VUX_RPVP_DOCUMENT —
+        XBRL_VUX_RPVP_Document (протокол проверки пакета отчётных форм);
+        XBRL_DOCUMENT — XBRLDocument (общий класс документов XBRL);
+        XBRL_CSV_RPVP_DOCUMENT — XbrlCsvRpvpDocument (протокол проверки пакета
+        отчётных данных XBRL-CSV); XBRL_CSV_RP_DOCUMENT — XbrlCsvRpDocument
+        (пакет отчётных данных XBRL-CSV, используется оркестратором XBRL-CSV).
+      enum:
+        - XBRL_VUX_RFVP_DOCUMENT
+        - XBRL_VUX_RPVP_DOCUMENT
+        - XBRL_DOCUMENT
+        - XBRL_CSV_RPVP_DOCUMENT
+        - XBRL_CSV_RP_DOCUMENT
+      example: "XBRL_CSV_RP_DOCUMENT"
+
+    RqUid:
+      type: string
+      format: uuid
+      description: Идентификатор запроса в ЕСМ (rqUid / ecmRequestId)
+      example: "123e4567-e89b-12d3-a456-426614174000"
+
+    ProblemDetail:
+      type: object
+      description: >
+        Тело ошибки по RFC 9457 (org.springframework.http.ProblemDetail).
+        title — строковое представление HTTP-статуса, status совпадает с HTTP-статусом ответа.
+      required:
+        - type
+        - title
+        - status
+        - detail
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: Тип проблемы; сервис не задаёт его явно
+          example: "about:blank"
+        title:
+          type: string
+          description: HTTP-статус в виде «<код> <имя>»
+          example: "400 BAD_REQUEST"
+        status:
+          type: integer
+          format: int32
+          description: Код ошибки, совпадает с HTTP-статусом ответа
+          example: 400
+        detail:
+          type: string
+          description: Описание ошибки
+          example: "Request validation failed"
+        instance:
+          type: string
+          format: uri-reference
+          description: Путь запроса, в котором возникла ошибка (проставляется Spring)
+          example: "/api/v1/upload/by-s3-path"
