@@ -1,0 +1,164 @@
+sequenceDiagram
+    autonumber
+    actor CL as Клиент XBRL-CSV
+    participant SCH as Spring Scheduler
+    participant APP as VUX сервис<br/>(Orchestrator, Upload,<br/>EmailScheduler, TfsListener)
+    participant KDC as Kerberos KDC
+    participant DB as Greenplum<br/>s_grnplm_as_cib_gm_vux
+    participant OK as АС ОКЭЙ<br/>(подпись CMS)
+    participant ECM as ECM REST<br/>createContents
+    participant S3 as S3<br/>(ECM bucket)
+    participant K as Kafka
+    participant TFS as TFS → ECM
+    participant SUPZ as СУПЗ<br/>JSON-RPC
+    participant SMTP as SMTP
+
+    %% ================= 1. СТАРТ =================
+    rect rgba(120,120,120,0.10)
+    Note over APP,DB: 1. СТАРТ ПРИЛОЖЕНИЯ — KerberosTicketCachedService @PostConstruct (если test-stand=false)
+    APP->>KDC: kinit -V -kt keytab -c cache user@REALM
+    KDC-->>APP: TGT (exit code 0, иначе IOException и остановка старта)
+    APP->>KDC: kvno postgres/<host из spring.datasource.url>
+    KDC-->>APP: TGS для postgres
+    APP->>DB: JDBC-подключение (GSSAPI / Kerberos)
+    opt DemoService: задан demo-config
+        APP->>DB: fn_flow_create_shedules_list(sheduleCode, customerId, docTypeId, taxonomy, reportDtList, flags)
+    end
+    end
+
+    %% ================= 2. ОРКЕСТРАТОР =================
+    rect rgba(46,125,82,0.10)
+    Note over SCH,SMTP: 2. ОРКЕСТРАТОР ПРОВЕРКИ ДОКУМЕНТОВ — OrchestratorService.run(), cron integration.orchestrator.scheduler.cron (по умолчанию каждые 15 мин)
+    SCH->>APP: run()
+    APP->>DB: fn_load_shedule() — загрузка расписания из ВКД
+    APP->>DB: fn_process_shedule() — инициализация обработки
+    APP->>DB: SELECT * FROM v_vux_document_shedule
+    DB-->>APP: записи расписания (ecm_id есть / нет)
+
+    loop 2a. Каждая запись БЕЗ ecm_id (новый документ)
+        alt CUV-toggle включён И doc_type_code = 0420415.1.3
+            Note over APP,DB: 2b. CUV-ПРОВЕРКА
+            APP->>DB: SELECT vux_document по doc_id → workflow_run_id
+            APP->>DB: SELECT form_0420415_1_3 context / data / unit / value WHERE workflow_run_id
+            APP->>DB: SELECT vux_data_xbrl_link, adm_xbrl_enum_values (справочники)
+            DB-->>APP: CheckDataContext
+            APP->>APP: ValidationDataService.validate()
+            Note right of APP: Правила: WorkflowRunId, ContextExists, UnitExists, ValueExists,<br/>OrphanContextIds, OrphanUnitIds, MissingContext/UnitDescriptions,<br/>SummaryAnalytics, TaxonomyMismatch
+            alt Ошибок CUV нет
+                APP->>DB: SELECT v_vux_document_validation_result (rn ≤ error_set, LIMIT total_set)
+                APP->>DB: SELECT v_vux_document_validation_log по doc_id
+                loop CSV: CONTEXT, UNIT, VALUE
+                    APP->>APP: DtoToCsvFileService → CSV, ГОСТ-хэш
+                    APP->>OK: POST sign (X-RqUid, X-RqTm, X-System, X-Channel, хэш)
+                    OK-->>APP: cmsSign (base64) / errorCode
+                    APP->>ECM: POST createContents multipart: CSV + CSV.sig (класс XBRL_VUX_RFVP_DOCUMENT)
+                    ECM-->>APP: 200 documents[0].id
+                    APP->>DB: fn_flow_cuv_set_ecm_id(doc_id, ecm_id, image_type)
+                end
+            else Есть ошибки CUV
+                loop каждая ошибка
+                    APP->>DB: fn_flow_cuv_set_error(doc_id, error_message, error_code)
+                end
+                APP->>DB: SELECT v_vux_document_validation_result + v_vux_document_validation_log
+            end
+        else Стандартная форма
+            APP->>DB: SELECT v_vux_document_validation_result (rn ≤ error_set, LIMIT total_set)
+            APP->>DB: SELECT v_vux_document_validation_log ORDER BY error_count DESC
+        end
+        APP->>APP: PDF-протокол (FreeMarker xbrl_protocol.ftl → HTML → PDF)
+        opt integration.sign.enabled = true
+            APP->>APP: CryptoHashService — ГОСТ-хэш PDF
+            APP->>OK: POST sign (хэш PDF)
+            OK-->>APP: cmsSign (base64), при ошибке — SignIntegrationException
+        end
+        APP->>ECM: POST createContents multipart: PDF [+ PDF.sig], класс ecm_class_name
+        alt 200 OK
+            ECM-->>APP: documents[0].id, resultCode
+            APP->>DB: fn_flow_set_ecm_id(doc_id, ecm_id, result_code)
+        else 206 / 4xx / 5xx
+            ECM-->>APP: E_NOT_UNIQUE / errorCode, errorReason → запись пропущена
+        end
+        APP->>DB: fn_flow_resolve_shedule(schedule_id)
+    end
+
+    loop 2c. Каждая запись С ecm_id (документ уже в ECM)
+        APP->>DB: SELECT v_vux_document_validation_result + v_vux_document_validation_log
+        APP->>APP: модель протокола без повторной загрузки в ECM
+        APP->>DB: fn_flow_resolve_shedule(schedule_id)
+    end
+
+    Note over APP,SMTP: 2d. handlePostUploadActions — выполняется для каждой записи после загрузки в ECM
+    alt В протоколе есть ошибки (rule_type = E)
+        APP->>APP: HTML-письмо по шаблону протокола
+        APP->>SMTP: «Stand: … XBRL \\ <форма> Ошибки на отчетную дату: <дата>», To + Cc
+        APP->>DB: fn_flow_set_mail_status(doc_id, recipients, subject, body, mail_type)
+    else Ошибок нет И supz_task_id пуст
+        APP->>SUPZ: JSON-RPC task.create (srcStatus=new, attachUrls = ecm_id[], атрибуты протокола, RqUID)
+        SUPZ-->>APP: taskId, status, raw JSON / JsonRpcError
+        APP->>DB: fn_flow_set_supz_id(doc_id, supz_task_id, status, raw_json)
+    else supz_task_id уже заполнен
+        APP->>APP: пропуск создания задачи в СУПЗ
+    end
+    end
+
+    %% ================= 3. REST S3 =================
+    rect rgba(44,90,140,0.10)
+    Note over CL,TFS: 3. ЗАГРУЗКА ПО S3-ПУТИ — POST /api/v1/upload/by-s3-path → UploadDocumentService.uploadDocumentViaTfsByS3Path
+    CL->>APP: POST {s3Path, filename, documentType, sliceId}
+    APP->>APP: rqUid = UUID.randomUUID()
+    APP->>DB: fn_ecm_request_create(rqUid, 'xbrl-csv', sliceId)
+    APP->>S3: GetObject(bucket, s3Path)
+    S3-->>APP: байты файла (для MD5, MIME, подписи)
+    opt integration.sign.enabled = true
+        APP->>OK: POST sign (ГОСТ-хэш файла)
+        OK-->>APP: cmsSign
+        APP->>S3: PutObject(<имя>.sig)
+    end
+    APP->>APP: EcmRqResolverService → UploadFileEcmRq → XML
+    APP->>K: send(topicOut, XML UploadFileEcmRq)
+    APP-->>CL: 200 rqUid
+    K-)TFS: запрос загрузки
+    TFS->>S3: чтение файла и .sig
+    TFS->>TFS: сохранение документа в ECM
+    alt Ошибка на любом шаге после регистрации
+        APP->>DB: fn_ecm_request_set_error(rqUid, текст ошибки)
+        APP-->>CL: ошибка (GlobalExceptionHandler)
+    end
+    Note over APP,S3: Легаси uploadDocumentViaTfs: файл сам кладётся в S3 (PutObject), очередь ECM не используется
+    end
+
+    %% ================= 4. КВИТАНЦИЯ TFS =================
+    rect rgba(160,110,30,0.10)
+    Note over APP,TFS: 4. КВИТАНЦИЯ TFS — TfsResponseListener @KafkaListener(topicIn), ручной ack
+    TFS-)K: UploadFileEcmRs (XML) в topicIn
+    K->>APP: ConsumerRecord
+    APP->>APP: EcmRqRsSerdesService.readEcmResponse → rqUid
+    APP->>DB: SELECT EXISTS(v_vux_ecm_queue WHERE request_id = rqUid)
+    DB-->>APP: inQueue
+    alt inQueue = true (сценарий S3-path)
+        alt resultCode = 0 и newId не пуст
+            APP->>DB: fn_ecm_request_set_ecm_id(rqUid, newId)
+        else ошибка в квитанции
+            APP->>DB: fn_ecm_request_set_error(rqUid, текст ошибки)
+        end
+    else inQueue = false (легаси-байтовый)
+        APP->>APP: resultDocumentId из BusinessAttrs
+        APP->>DB: fn_flow_set_ecm_id(resultDocumentId, newId, resultCode)
+    end
+    APP->>K: acknowledge()
+    end
+
+    %% ================= 5. РАССЫЛКА =================
+    rect rgba(130,60,140,0.10)
+    Note over SCH,SMTP: 5. ПЛАНОВАЯ РАССЫЛКА — EmailSchedulerService.run(), toggle scheduled-email, cron mail-sheduled-sender.cron
+    SCH->>APP: run()
+    loop тип письма: PREPARATION, VERIFICATION
+        APP->>DB: SELECT v_vux_info_email_shedule WHERE type AND send_time ≥ now − max-past-days
+        DB-->>APP: записи к отправке
+        loop каждая запись
+            APP->>APP: FreeMarker mail_reminder.ftl / mail_check_reminder.ftl → HTML
+            APP->>SMTP: «Напоминание о подготовке / проверке готовности отчетных форм ВУИКС…», To + Cc
+            APP->>DB: fn_flow_info_email_send(id) — запись уходит из витрины
+        end
+    end
+    end
